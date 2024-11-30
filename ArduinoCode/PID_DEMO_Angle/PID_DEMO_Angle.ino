@@ -58,7 +58,6 @@ void setup() {
 }
 void CounterClockWise()
 {
-  //Serial.println("CounterClockWise");
     digitalWrite(motor1pin1,  HIGH);
     digitalWrite(motor1pin2, LOW);
 }
@@ -81,62 +80,51 @@ void checkDirection()
   if (digitalRead(encoderBpin) == HIGH)
   {
     Dir = 1;
-
   }
   else
   {
     Dir = -1;
-
   }
 }
+
 void loop() {
+  
   unsigned long currentTime = millis();
+  
    if (dutyCycleMotor < 0)
       ClockWise();
     else if (dutyCycleMotor > 0)
       CounterClockWise();
-
+      
   measuredAngle =  countA * 360.0 / numberOfTeeth;
+  
   Kp = analogRead(KpPin) / 512.0 / maxAngle * 8;
   Ki = analogRead(KiPin) / 512.0 / maxAngle * 4;
   Kd = analogRead(KdPin) / 512.0 / maxAngle;
-
   Setpoint = analogRead(SetPointPin) / 512.0 * maxAngle; // ;
 
   if (currentTime - previousTime >= 100)
   {
-   
     previousTime = currentTime;
     myPID.SetTunings(Kp, Ki, Kd, true);
     myPID.Compute();
     dutyCycleMotor = constrain(dutyCycleMotor, -1.0, 1.0);
 
     Serial.print("Kp: ");
-
     Serial.print(Kp, 6);
-
     Serial.print(", Ki: ");
     Serial.print(Ki, 6);
-
     Serial.print(", Kd: ");
     Serial.print(Kd, 6);
-
     Serial.print(", (Setpoint): ");
     Serial.print(Setpoint, 0);
-
     Serial.print(", Angle (INPUT): ");
-
     Serial.print(measuredAngle, 1);
-
     Serial.print(", DuCy (OUTPUT): ");
     Serial.println(dutyCycleMotor, 4);
-
   }
 
   ledcWrite(PWM_CHANNEL, abs(dutyCycleMotor * 255.0));
-  //analogWrite(enablePWMpin, Setpoint); //ENA  pin //dutyCycleMotor * 255
-
 
   deltaT = millis() - currentTime;
-
 }
