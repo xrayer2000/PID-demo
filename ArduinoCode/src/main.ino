@@ -1,5 +1,4 @@
 #include <Arduino.h>
-// #include <AccelStepper.h>
 #include <Wire.h>
 #include <PressButton.h> //Interface
 #include <RotaryEncoderAccel.h> //Interface
@@ -8,25 +7,30 @@
 #include "PID_Controller.h" //PID controller
 #include <AS5600.h> //Magnetic encoder
 
+TwoWire Wire1(1); // I2C2
+
 //--------------------------------------------------------------------------------------------------
 //--- Stepper pins ---
 //--------------------------------------------------------------------------------------------------
-
 #define EN_PIN   PA6   // Enable for all stepper drivers
-
 #define DIR_PIN_1  PA0   // Direction for stepper driver 1
 #define STEP_PIN_1 PA1   // Step for stepper driver 1
 #define DIR_PIN_2  PA2   // Direction for stepper driver 2
 #define STEP_PIN_2 PA3   // Step for stepper driver 2
-
-#define SDA_PIN PB9 // I2C SDA
-#define SCL_PIN PB8 // I2C SCL
-#define confirmBtnPin PB7 // Rotary encoder pins
-#define outputA PB6 // Rotary encoder pins
-#define outputB PB5 // Rotary encoder pins
 #define MS1_PIN PA15 //Microstepping pins for all 4 stepper drivers
 #define MS2_PIN PB3 //Microstepping pins for all 4 stepper drivers
 #define MS3_PIN PB4 //Microstepping pins for all 4 stepper drivers
+//--- I2C pins --- AS5600
+#define SDA_PIN_1 PB11 // I2C SDA
+#define SCL_PIN_1 PB10 // I2C SCL
+//--- I2C pins --- Oled
+#define SDA_PIN_0 PB9 // I2C SDA
+#define SCL_PIN_0 PB8 // I2C SCL
+//rotary encoder pins
+#define confirmBtnPin PB7 // Rotary encoder pins
+#define outputA PB6 // Rotary encoder pins
+#define outputB PB5 // Rotary encoder pins
+
 
 // OLED display
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
@@ -98,7 +102,6 @@ uint8_t saveCursorPos;
 uint8_t dispOffset;
 uint8_t saveDispOffset;
 bool edditing = false;
-bool detectedRotation = false;
 uint8_t root_pntrPos = 0;
 uint8_t root_dispOffset = 0;
 uint8_t flashCntr;
@@ -120,16 +123,16 @@ void printDoubleAtWidth(double value, uint8_t width, const char* c, uint8_t deci
 struct Mysettings{
 
     float setPoint = 10.0;
-    float Kp = 70.0;
-    float Ki = 5.0;
-    float Kd = 3.0;
+    float Kp = 50.0;
+    float Ki = 0.0;
+    float Kd = 2.0;
 
     float amplitude =  20.0;
     float period = 2.0;
 
     float timeBeforeDisable = 2;
 
-    SystemMode systemMode = MODE_RPM;
+    SystemMode systemMode = MODE_OSCILATION;
 
   uint16_t settingsCheckValue = SETTINGS_CHKVAL;
 };
@@ -141,9 +144,6 @@ void sets_Load();
 void sets_Save();
 //-----------------------------------------------------------------------
 //Time
-long passedTimeS;
-long previousPassedTimeS;
-unsigned long lastEditTime = 0;
 //-----------------------------------------------------------------------
 //Controller
 float lastSetPoint;
@@ -158,20 +158,15 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display1(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 float timeLastTouched = 0;
 bool displaySleeping = false;
-bool shouldSleep = false;
 //-----------------------------------------------------------------------
 float passedTime, previousPassedTime1, previousPassedTime2 = 0;
 bool initPage = true;
-bool changeValue = false;
-bool changeValues [20];
+bool changeValues [10];
 //-----------------------------------------------------------------------
 //sensors
 unsigned long lastReadTime = 0;
 const float readInterval = 1000;  // microseconds 
 //-----------------------------------------------------------------------
-
-// AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
-
 // Loop time measurement variables
 static uint32_t last  = 0;
 uint32_t now  = 0;
@@ -179,10 +174,6 @@ uint32_t loopTime  = 0;
 uint32_t sumLoopTime = 0;
 uint32_t loopCount = 0;
 uint32_t avgLoopTime = 0;
-
-// diagnostic step counter
-volatile uint32_t stepCount = 0;
-uint32_t lastStepPrint = 0;
 //--------------------------------------------------------------------------------------------------
 //PID Controller
 float angle;        // current measured angle
@@ -190,22 +181,12 @@ float stepVelocity; // PID output → stepper speed
 PID_Controller pid(&angle, &stepVelocity, &settings.setPoint);
 //--------------------------------------------------------------------------------------------------
 // Magnetic encoder - AS5600
-AMS_5600 ams5600;
-float currentAngle = 0.0;
-float previousAngle = 0.0;
 float absoluteAngle = 0;
-int32_t turns = 0;
-int32_t rpmAccum = 0;
-uint32_t rpmTimer = 0;
 float rpm_measured = 0;
-//
 //--------------------------------------------------------------------------------------------------
 //stepper motor parameters
 uint8_t microstepping = 16;  // 16, 32, 64, 128 // there is no 8 microstepping mode on the TMC2209
 float steps_per_rev = 200.0f * microstepping;
-float rpm = stepVelocity / steps_per_rev * 60.0f;
-const float RPM_SCALE = 60000000.0f / (4096.0f * readInterval);
-
 
 //=================================================================================================
 //Setup
@@ -213,7 +194,7 @@ const float RPM_SCALE = 60000000.0f / (4096.0f * readInterval);
 void setup() {
 
     Serial.begin(115200);
-    while(!Serial);
+    //while(!Serial);
     Serial.println("Boot");
 
     pinMode(EN_PIN, OUTPUT);
@@ -221,17 +202,17 @@ void setup() {
     pinMode(DIR_PIN_1, OUTPUT);
     pinMode(STEP_PIN_2, OUTPUT);
     pinMode(DIR_PIN_2, OUTPUT);
+    pinMode(MS1_PIN, OUTPUT);
+    pinMode(MS2_PIN, OUTPUT);
+    pinMode(MS3_PIN, OUTPUT);
 
-    pinMode(SDA_PIN, INPUT_PULLUP);
-    pinMode(SCL_PIN, INPUT_PULLUP);
+    // pinMode(SDA_PIN_0, INPUT_PULLUP);
+    // pinMode(SCL_PIN_0, INPUT_PULLUP);
 
     pinMode(confirmBtnPin, INPUT_PULLUP);
     pinMode(outputA, INPUT_PULLUP);
     pinMode(outputB, INPUT_PULLUP);
 
-    pinMode(MS1_PIN, OUTPUT);
-    pinMode(MS2_PIN, OUTPUT);
-    pinMode(MS3_PIN, OUTPUT);
 
     setMicrostepA4988(microstepping);
 
@@ -242,27 +223,43 @@ void setup() {
     // Initialize button ISR
     btnOk.init();
 
-    // -------- I2C --------
-    Wire.setSDA(SDA_PIN);
-    Wire.setSCL(SCL_PIN);
+    // -------- I2C - Oled--------
+    Wire.setSDA(SDA_PIN_0);
+    Wire.setSCL(SCL_PIN_0);
     Wire.begin();
     Wire.setClock(400000);
 
-    Serial.println("Scanning...");
+    // -------- I2C - AS5600--------
+    Wire1.setSDA(SDA_PIN_1);
+    Wire1.setSCL(SCL_PIN_1);
+    Wire1.begin();
+    Wire1.setClock(400000);
 
-    for (uint8_t addr = 1; addr < 127; addr++)
-    {
-        Wire.beginTransmission(addr);
-        uint8_t error = Wire.endTransmission();
+    // Serial.println("Scanning Wire...");
+    // for (uint8_t addr = 1; addr < 127; addr++)
+    // {
+    //     Wire.beginTransmission(addr);
+    //     uint8_t error = Wire.endTransmission();
+    //     if (error == 0)
+    //     {
+    //         Serial.print("Found device at 0x");
+    //         Serial.println(addr, HEX);
+    //     }
+    // }
+    // Serial.println("Wire done");
 
-        if (error == 0)
-        {
-            Serial.print("Found device at 0x");
-            Serial.println(addr, HEX);
-        }
-    }
-
-    Serial.println("Done");
+    // Serial.println("Scanning Wire1...");
+    // for (uint8_t addr = 1; addr < 127; addr++)
+    // {
+    //     Wire1.beginTransmission(addr);
+    //     uint8_t error = Wire1.endTransmission();
+    //     if (error == 0)
+    //     {
+    //         Serial.print("Found device at 0x");
+    //         Serial.println(addr, HEX);
+    //     }
+    // }
+    // Serial.println("Wire1 done");
 
     display1.setI2CAddress(0x3C << 1);
     display1.begin();
@@ -273,34 +270,24 @@ void setup() {
 
     DISP_CHAR_WIDTH = SCREEN_WIDTH / (display1.getMaxCharWidth()  + 0);          // hur många tecken per rad: display1.getMaxCharWidth();
     DISP_ITEM_ROWS =  SCREEN_HEIGHT / (display1.getMaxCharHeight()  + 3);         // max rader som får plats
-
     CHAR_X = display1.getMaxCharWidth() + 2; //margin
     CHAR_Y = display1.getMaxCharHeight() + 2; //margin
 
     display2.setI2CAddress(0x3D << 1);
     display2.begin();
-    display2.setBusClock(400000);    // lower speed to 400kHz
-    display2.setFont(u8g2_font_5x8_mr);	// choose a suitable font
-    display2.clearBuffer();					// clear the internal memory
+    display2.setBusClock(400000);   
+    display2.setFont(u8g2_font_5x8_mr);	
+    display2.clearBuffer();					
     display2.setCursor(0, 0);
 
     DISP2_CHAR_WIDTH = SCREEN_WIDTH / (display2.getMaxCharWidth()  + 2);          // hur många tecken per rad: display2.getMaxCharWidth();
-    DISP2_ITEM_ROWS =  5;         // max rader som får plats
-
+    DISP2_ITEM_ROWS =  5;       
     DISP2_CHAR_X = display2.getMaxCharWidth() + 0; //margin
     DISP2_CHAR_Y = (SCREEN_HEIGHT / DISP2_ITEM_ROWS) + 0; //margin
 
     sets_Load();
 
     last = micros();
-
-    //  // --- Stepper configuration ---
-    // stepper.setMaxSpeed(25000);
-    // stepper.setAcceleration(10000);
-    // stepper.setEnablePin(EN_PIN);
-    // stepper.setPinsInverted(false, false, true);
-    // stepper.enableOutputs();
-    // stepper.setMinPulseWidth(5);
 
     lastSetPoint = settings.setPoint;
     lastKp = settings.Kp;
@@ -312,7 +299,6 @@ void setup() {
     pid.SetOutputLimits(-15000, 15000);
     pid.SetIntegralLimit(10000);
 
-    
 
     initAS5600();
     // setMicrostepA4988(1);
@@ -325,10 +311,8 @@ void setup() {
 void loop()
 {
     
-    passedTime = millis() * 0.001f; // Convert to seconds
+    passedTime = millis() * 0.001f; 
     float minutesSinceLastAction = (passedTime * 0.0166667f) - timeLastTouched;
-    // Serial.print("Minutes since last action: ");
-    // Serial.println(minutesSinceLastAction, 3);
     bool shouldSleep = (minutesSinceLastAction > settings.timeBeforeDisable);
 
     if (shouldSleep != displaySleeping)
@@ -338,7 +322,7 @@ void loop()
         display2.setPowerSave(displaySleeping);
     }
 
-    const float UPDATE_INTERVAL1 = 0.2f;
+    const float UPDATE_INTERVAL1 = 0.05f;
     const float UPDATE_INTERVAL2 = 0.05f;
     bool shouldUpdate1 = (passedTime - previousPassedTime1 >= UPDATE_INTERVAL1);
     bool shouldUpdate2 = (passedTime - previousPassedTime2 >= UPDATE_INTERVAL2);
@@ -349,10 +333,15 @@ void loop()
     {
       static uint32_t lastPrint = 0;
       uint32_t now = millis();
+      uint32_t ms = millis();
+      uint32_t sec = ms / 1000;
+      uint32_t centisec = (ms % 1000) / 10;
       //updateDisp2();
       lastPrint = now;
       Serial.printf(
-        "SetPoint:%6ld | Angle:%6ld | RPM:%6ld | Vel:%6ld | Kp:%4ld | Ki:%4ld | Kd:%4ld | Mode:%s | Micro:1/%lu | Loop:%4lu | LoopFreq:%6lu\n",
+        "Time:%4lu.%02lu\t | SetPoint:%6ld | Angle:%6ld | RPM:%6ld | Vel:%6ld | Kp:%4ld | Ki:%4ld | Kd:%4ld | Mode:%s | Micro:1/%lu | Loop:%4lu | LoopFreq:%6lu\n",
+        sec,
+        centisec,
         (int32_t)settings.setPoint,
         (int32_t)absoluteAngle,
         (int32_t)rpm_measured,
@@ -365,7 +354,10 @@ void loop()
         avgLoopTime,
         1000000UL / avgLoopTime
       );
-      
+
+      // Serial.print("Loop: ");
+      // Serial.println(avgLoopTime);
+
       previousPassedTime1 = passedTime;
     }
 
@@ -385,17 +377,11 @@ void loop()
       updateItemValue = false;
     }
 
-    detectedRotation = encoder.getDirection() != RotaryEncoderAccel::Direction::NOROTATION;
-    if(detectedRotation)
-    {
-        lastEditTime = millis();
-    }
     // Consume confirm button timestamp from library ISR and update touch timers
 
     uint32_t t = btnOk.consumeTouchMs();
     if (t != 0) {
-      timeLastTouched = passedTime / 60.0; // Store current time in minutes
-      lastEditTime = t;
+      timeLastTouched = passedTime / 60.0; 
     }
 
     //loop time measurement
@@ -411,8 +397,8 @@ void loop()
     {
         sumLoopTime = now - last;
         avgLoopTime = sumLoopTime /  (loopCount - 1);
-
         loopCount = 0;
+        last = now; // ← you reset count but never reset `last`!
     }
 
     //----------------------------------------------------------------------------------
@@ -427,10 +413,6 @@ void loop()
             setAngle();
         }
     }
-    // in RPM mode, updateSetPoint() already adjusted stepVelocity and set the speed
-
-    //stepper.runSpeed();
-    
 }
 
 void page_MenuRoot(){//=================================================ROOT_MENU============================================
@@ -502,7 +484,6 @@ void page_MENU_SYSTEM_MODE(){//=================================================
     dispOffset = 0;
 
     initMenuPage(F("SYSTEM MODE"), 4);
-    changeValues[10];
 
     initPage = false;
   }
@@ -854,7 +835,7 @@ void printDoubleAtWidthDisplay2(double value, uint8_t width, char c){
 }
 
 //======================================================TOOLS_settings======================================================
-void sets_SetDeafault()
+void set_Default()
 {
   Mysettings tempSets;
   memcpy(&settings, &tempSets, sizeof settings);
@@ -863,20 +844,18 @@ void sets_SetDeafault()
 void sets_Load()
 {
   EEPROM.get(0,settings);
-  if(settings.settingsCheckValue != SETTINGS_CHKVAL){sets_SetDeafault();}
+  if(settings.settingsCheckValue != SETTINGS_CHKVAL){set_Default();}
 }
 void sets_Save()
 {
   if (memcmp(&settings, &oldSettings, sizeof(settings)) != 0) {
     EEPROM.put(0, settings);
-    oldSettings = settings; // uppdatera efter commit
+    oldSettings = settings;
   }
 }
 
 void updateSettings()
 {
-
-    previousPassedTimeS = passedTimeS;
 
     // --- Retune controller ONLY if changed ---
     if (settings.setPoint != lastSetPoint ||
@@ -895,8 +874,7 @@ void updateSettings()
         updateAllItems = true;
     }
 
-    //updateAllItems = true;  // det är här jag är, menyn uppdateras inte när jag scrollar
-                                   //upp och ner utan denna, men då blir regler loopen långsamm
+    //updateAllItems = true;  
 }
 
 void updateSensorValues()
@@ -910,17 +888,17 @@ void updateSensorValues()
     static uint16_t prevRaw;
     static bool initialized = false;
 
-    uint16_t raw = readAS5600RawFast();
+    uint16_t rawAngle = readAS5600RawFast();
     
     if (!initialized)
     {
-        prevRaw = raw;
+        prevRaw = rawAngle;
         initialized = true;
         return;
     }
 
-    int16_t diff =  raw - prevRaw;
-    prevRaw = raw;
+    int16_t diff =  rawAngle - prevRaw;
+    prevRaw = rawAngle;
     
 
     if (diff > 2048) diff -= 4096;
@@ -929,17 +907,14 @@ void updateSensorValues()
     absoluteAngle += diff * 0.087890625f;
     angle = absoluteAngle;
 
-    // --- NY RPM BERÄKNING ---
     float dt_sec = dt * 1e-6f;
 
     if (dt_sec > 0.0f)
     {
         float rpm_instant = (diff / 4096.0f) / dt_sec * 60.0f;
 
-        rpm_measured = Filter(rpm_instant, rpm_measured, 0.90f, 100.0f);
+        rpm_measured = Filter(rpm_instant, rpm_measured, 0.99f, 100.0f);
     }
-
-    
 }
 
 float Filter(float New, float Current, float alpha, float maxValue)
@@ -960,16 +935,14 @@ float roundTo(float value, int decimals) {
 
 void setAngle()
 {
-  if (abs(stepVelocity) > 2.0f)
+  if (abs(stepVelocity) > 1.0f)
   {
-      //stepper.setSpeed(stepVelocity);
       setDirection(stepVelocity);
       setStepFrequency(abs(stepVelocity));
   }
   else
   {
-      //stepper.setSpeed(0);
-      setStepFrequency(0);   // stop timer-based stepping
+      setStepFrequency(0);
       stepVelocity = 0;
   }
 }
@@ -1015,7 +988,6 @@ void updateMode()
           setDirection(settings.setPoint >= 0 ? 1 : -1);
           setStepFrequency((uint32_t)steps_per_sec);
           stepVelocity = settings.setPoint;  // keep in RPM for display
-          rpm = settings.setPoint;
       }
       break;
     }
@@ -1023,17 +995,17 @@ void updateMode()
 
 void initAS5600()
 {
-    Wire.beginTransmission(AS5600_ADDR);
-    Wire.write(AS5600_RAW_ANGLE);
-    Wire.endTransmission();
+    Wire1.beginTransmission(AS5600_ADDR);
+    Wire1.write(AS5600_RAW_ANGLE);
+    Wire1.endTransmission();
 }
 
 inline uint16_t readAS5600RawFast()
 {
-    Wire.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
+    Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
 
-    uint16_t high = Wire.read();
-    uint16_t low  = Wire.read();
+    uint16_t high = Wire1.read();
+    uint16_t low  = Wire1.read();
 
     return ((high & 0x0F) << 8) | low;
 }
@@ -1041,7 +1013,6 @@ inline uint16_t readAS5600RawFast()
 void stepISR()
 {
     digitalWrite(STEP_PIN_1, HIGH);
-    delayMicroseconds(2);
     digitalWrite(STEP_PIN_1, LOW);
 }
 
@@ -1062,6 +1033,7 @@ void setStepFrequency(uint32_t steps_per_sec)
         return;
     }
     stepTimer->setOverflow(steps_per_sec, HERTZ_FORMAT);
+    stepTimer->refresh();  // force immediate reload //// !!!!!VIKTIG
     stepTimer->resume();
 }
 
@@ -1070,7 +1042,7 @@ void setDirection(int velocity)
     digitalWrite(DIR_PIN_1, velocity >= 0);
 }
 
-void setMicrostep(uint16_t microstep)
+void setMicrostepTMC2209(uint16_t microstep) //this version dont have 1/8 microstep
 {
     switch (microstep)
     {
