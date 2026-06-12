@@ -1,6 +1,8 @@
 #include "main.h"
-#include "TaskDisplay.h"
-
+#include "Axis/axis.h"
+#include "taskMain.h"
+#include "taskControl.h"
+#include "taskDisplay.h"
 //--------------------------------------------------------------------------------------------------
 // Object definitions
 //--------------------------------------------------------------------------------------------------
@@ -19,16 +21,6 @@ Mysettings settings;
 Mysettings oldSettings;
 
 HardwareTimer *stepTimer = nullptr;
-volatile uint32_t stepFrequency = 0;
-
-float angle        = 0.0f;
-float stepVelocity = 0.0f;
-
-PID_Controller pid(&angle, &stepVelocity, &settings.setPoint);
-
-// Magnetic encoder - AS5600
-float absoluteAngle = 0.0f;
-float rpm_measured  = 0.0f;
 
 //stepper motor parameters
 uint8_t microstepping = 16;  // 16, 32, 64, 128 // there is no 8 microstepping mode on the TMC2209
@@ -62,14 +54,13 @@ bool    initPage         = true;
 bool    changeValues[10] = {};
 
 // Timing
-float passedTime          = 0.0f;
 float previousPassedTime1 = 0.0f;
 float previousPassedTime2 = 0.0f;
 float timeLastTouched     = 0.0f;
 bool  displaySleeping     = false;
 
 // Loop time measurement variables
-static uint32_t last = 0;
+uint32_t last = 0;     //staic removed
 uint32_t now         = 0;
 uint32_t loopTime    = 0;
 uint32_t sumLoopTime = 0;
@@ -78,7 +69,6 @@ uint32_t avgLoopTime = 0;
 
 //sensors
 unsigned long lastReadTime  = 0;
-const float   readInterval  = 500;  // microseconds
 
 // Last-known settings (change detection)
 float lastSetPoint  = 0.0f;
@@ -101,11 +91,6 @@ void handleInterrupt()
 //==================================================================================================
 void setup()
 {
-    // Create display task
-    xTaskCreate(TaskDisplay, "Display", 256, nullptr, 1, &taskDisplayHandle);
-    // Start the scheduler
-    vTaskStartScheduler();
-
     Serial.begin(115200);
     // while(!Serial);
     Serial.println("Boot");
@@ -213,107 +198,22 @@ void setup()
     initStepTimer();
 
     digitalWrite(EN_PIN, LOW); // Enable all stepper drivers
+
+    // Create main task
+    xTaskCreate(taskMain,    "Main",    512,  nullptr, 2, nullptr);
+    // Create control task
+    xTaskCreate(taskControl, "Control", 512,  nullptr, 3, &taskControlHandle);
+    // Create display task
+    xTaskCreate(taskDisplay, "Display", 1024, nullptr, 1, &taskDisplayHandle);
+
+    // Start the scheduler
+    vTaskStartScheduler();
 }
 
 //==================================================================================================
 // Loop
 //==================================================================================================
-void loop()
-{
-    passedTime = millis() * 0.001f;
-    float minutesSinceLastAction = (passedTime * 0.0166667f) - timeLastTouched;
-    bool  shouldSleep            = (minutesSinceLastAction > settings.timeBeforeDisable);
-
-    if (shouldSleep != displaySleeping) {
-        displaySleeping = shouldSleep;
-        display1.setPowerSave(displaySleeping);
-        display2.setPowerSave(displaySleeping);
-    }
-
-    const float UPDATE_INTERVAL1 = 0.05f;
-    const float UPDATE_INTERVAL2 = 0.05f;
-    bool shouldUpdate1 = (passedTime - previousPassedTime1 >= UPDATE_INTERVAL1);
-    bool shouldUpdate2 = (passedTime - previousPassedTime2 >= UPDATE_INTERVAL2);
-
-    updateSettings();
-    updateSensorValues();
-
-    if (shouldUpdate1) {
-        static uint32_t lastPrint = 0;
-        uint32_t now      = millis();
-        uint32_t ms       = millis();
-        uint32_t sec      = ms / 1000;
-        uint32_t centisec = (ms % 1000) / 10;
-        //updateDisp2();
-        lastPrint = now;
-
-        Serial.printf(
-            "Time:%4lu.%02lu\t | SetPoint:%6ld | Angle:%6ld | RPM:%6ld | Vel:%6ld | Kp:%4ld | Ki:%4ld | Kd:%4ld | Mode:%s | Micro:1/%lu | Loop:%4lu | LoopFreq:%6lu\n",
-            sec, centisec,
-            (int32_t)settings.setPoint,
-            (int32_t)absoluteAngle,
-            (int32_t)rpm_measured,
-            (int32_t)stepVelocity,
-            (int32_t)settings.Kp,
-            (int32_t)settings.Ki,
-            (int32_t)settings.Kd,
-            systemModeToString(settings.systemMode),
-            (uint32_t)microstepping,
-            avgLoopTime,
-            1000000UL / avgLoopTime
-        );
-
-        // Serial.print("Loop: ");
-        // Serial.println(avgLoopTime);
-
-        previousPassedTime1 = passedTime;
-    }
-
-    switch (currPage) {
-        case MENU_ROOT:        page_MenuRoot();         break; //page_MenuRoot() calls doPointerNavigation(), and it sets updateAllItems if scrolled
-        case MENU_SYSTEM_MODE: page_MENU_SYSTEM_MODE(); break;
-    }
-
-    if ((updateAllItems || updateItemValue) && shouldUpdate2) {
-        display1.sendBuffer(); //gör denna sist
-        previousPassedTime2 = passedTime;
-        updateAllItems  = false;
-        updateItemValue = false;
-    }
-
-    // Consume confirm button timestamp from library ISR and update touch timers
-    uint32_t t = btnOk.consumeTouchMs();
-    if (t != 0) {
-        timeLastTouched = passedTime / 60.0f;
-    }
-
-    //loop time measurement
-    //----------------------------------------------------------------------------------
-    now = micros();
-
-    loopCount++;
-
-    if (loopCount == 1)
-        last = now;
-
-    if (loopCount >= 1000) {
-        sumLoopTime = now - last;
-        avgLoopTime = sumLoopTime / (loopCount - 1);
-        loopCount   = 0;
-        last        = now; // ← you reset count but never reset `last`!
-    }
-
-    //----------------------------------------------------------------------------------
-    //Stepper motor control
-    //updateMicrostepCycle();
-    updateMode();
-
-    if (settings.systemMode != MODE_RPM) {
-        if (pid.Compute()) {
-            setAngle();
-        }
-    }
-}
+void loop(){}
 
 //==================================================================================================
 // Menu pages
@@ -447,7 +347,7 @@ void doPointerNavigation()
             printPointer();  // Only redraw when view actually changes
         }
 
-        timeLastTouched = passedTime / 60.0; // Update last touched time (encoder rotation)
+        timeLastTouched = millis() / 60000.0f; // Update last touched time (encoder rotation)
 
         // Serial.print("Direction: ");
         // Serial.print(direction);
@@ -477,7 +377,7 @@ void incrementDecrementInt(int16_t *v, int16_t amount, int16_t min, int16_t max)
         }
 
         updateItemValue = true;
-        timeLastTouched = passedTime / 60.0;
+        timeLastTouched = millis() / 60000.0f;
     }
 
     delayMicroseconds(5);
@@ -514,7 +414,7 @@ void incrementDecrementFloat(float *v, float amount, float min, float max)
         // Serial.println(newValue);
 
         //updateItemValue = true;
-        timeLastTouched = passedTime / 60.0;
+        timeLastTouched = millis() / 60000.0f;
     }
 
     delayMicroseconds(5);
@@ -545,7 +445,7 @@ void incrementDecrementDouble(double *v, double amount, double min, double max)
         else if (newValue < min)                     *v = min;
         else                                         *v = max;
 
-        timeLastTouched = passedTime / 60.0;
+        timeLastTouched = millis() / 60000.0f;
     }
 
     delayMicroseconds(5);
@@ -680,10 +580,10 @@ void updateDisp2()
     };
 
     menuItemPrintableDisp2(1,  1); display2.print(F("AbsoluteAngle:"));
-    menuItemPrintableDisp2(15, 1); printInt32_tAtWidthDisplay2(absoluteAngle, 3, ' ');
+    menuItemPrintableDisp2(15, 1); printInt32_tAtWidthDisplay2(axis.absoluteAngle, 3, ' ');
 
     menuItemPrintableDisp2(1,  2); display2.print(F("RPM:          "));
-    menuItemPrintableDisp2(15, 2); printInt32_tAtWidthDisplay2((int32_t)rpm_measured, 3, ' ');
+    menuItemPrintableDisp2(15, 2); printInt32_tAtWidthDisplay2((int32_t)axis.rpm, 3, ' ');
 
     // menuItemPrintableDisp2(1,3); display2.print(F(":             "));
     // menuItemPrintableDisp2(15,3); printInt32_tAtWidthDisplay2(2,3,' ');
@@ -767,42 +667,6 @@ void updateSettings()
     //updateAllItems = true;
 }
 
-void updateSensorValues()
-{
-    uint32_t now = micros();
-    uint32_t dt  = now - lastReadTime;
-
-    if (dt < readInterval) return;
-    lastReadTime = now;
-
-    static uint16_t prevRaw     = 0;
-    static bool     initialized = false;
-
-    uint16_t rawAngle = readAS5600RawFast();
-
-    if (!initialized) {
-        prevRaw     = rawAngle;
-        initialized = true;
-        return;
-    }
-
-    int16_t diff = rawAngle - prevRaw;
-    prevRaw = rawAngle;
-
-    if      (diff >  2048) diff -= 4096;
-    else if (diff < -2048) diff += 4096;
-
-    absoluteAngle += diff * 0.087890625f;
-    angle          = absoluteAngle;
-
-    float dt_sec = dt * 1e-6f;
-
-    if (dt_sec > 0.0f) {
-        float rpm_instant = (diff / 4096.0f) / dt_sec * 60.0f;
-        rpm_measured = Filter(rpm_instant, rpm_measured, 0.99f, 100.0f);
-    }
-}
-
 void initAS5600()
 {
     Wire1.beginTransmission(AS5600_ADDR);
@@ -810,7 +674,7 @@ void initAS5600()
     Wire1.endTransmission();
 }
 
-inline uint16_t readAS5600RawFast()
+uint16_t readAS5600RawFast()
 {
     Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
     uint16_t high = Wire1.read();
@@ -830,49 +694,6 @@ void initStepTimer()
     stepTimer = new HardwareTimer(TIM2);
     stepTimer->setOverflow(1000, HERTZ_FORMAT);
     stepTimer->attachInterrupt(stepISR);
-}
-
-void setStepFrequency(uint32_t steps_per_sec)
-{
-    stepFrequency = steps_per_sec;
-    if (steps_per_sec == 0) {
-        stepTimer->pause();
-        digitalWrite(STEP_PIN_1, LOW);
-        return;
-    }
-    stepTimer->setOverflow(steps_per_sec, HERTZ_FORMAT);
-    stepTimer->refresh();  // force immediate reload //// !!!!!VIKTIG
-    stepTimer->resume();
-}
-
-void setDirection(int velocity)
-{
-    digitalWrite(DIR_PIN_1, velocity >= 0);
-}
-
-void setAngle()
-{
-    static bool enabled = false;
-
-    const float ON_THRESHOLD  = 8.0f;  // start moving
-    const float OFF_THRESHOLD = 1.0f;  // stop moving
-
-    float v = fabs(stepVelocity);
-
-    if (!enabled && v > ON_THRESHOLD) {
-        enabled = true;
-        digitalWrite(EN_PIN, LOW); // enable driver
-    } else if (enabled && v < OFF_THRESHOLD) {
-        enabled = false;
-        setStepFrequency(0);
-        stepVelocity = 0;
-        digitalWrite(EN_PIN, HIGH); // disable driver
-    }
-
-    if (enabled) {
-        setDirection(stepVelocity);
-        setStepFrequency(v);
-    }
 }
 
 void setMicrostepTMC2209(uint16_t microstep) //this version dont have 1/8 microstep
@@ -931,7 +752,7 @@ void microstepTest()
     const uint16_t testSteps = 200;
 
     updateSensorValues();
-    float startAngle = absoluteAngle;
+    float startAngle = axis.absoluteAngle;
 
     for (uint16_t i = 0; i < testSteps; i++) {
         digitalWrite(STEP_PIN_1, HIGH);
@@ -942,55 +763,13 @@ void microstepTest()
     }
 
     updateSensorValues();
-    float delta = absoluteAngle - startAngle;
+    float delta = axis.absoluteAngle - startAngle;
 
     Serial.print("Microstep test: ");
     Serial.print(testSteps);
     Serial.print(" pulses -> ");
     Serial.print(delta, 2);   // 2 decimal places
     Serial.println(" deg");
-}
-
-void updateMode()
-{
-    static int lastMode = -1;
-
-    if (settings.systemMode != lastMode) {
-        absoluteAngle = 0;      // reset once when mode changes
-        lastMode      = settings.systemMode;
-    }
-
-    switch (settings.systemMode) {
-        case MODE_OSCILATION: {
-            uint32_t period_ms  = settings.period * 1000.0f;
-            uint32_t phase      = millis() % period_ms;
-            float    newSetPoint = (phase < period_ms / 2.0f)
-                                   ? settings.amplitude
-                                   : -settings.amplitude;
-
-            // Reset integral whenever setpoint flips
-            if ((newSetPoint > 0) != (settings.setPoint > 0))
-                pid.ResetIntegral();
-
-            settings.setPoint = newSetPoint;
-        } break;
-
-        case MODE_SETPOINT:
-            // nothing to compute
-        break;
-
-        case MODE_RPM: {
-            float steps_per_sec = abs(settings.setPoint) / 60.0f * steps_per_rev;
-
-            static float lastSteps = -1;
-            if (steps_per_sec != lastSteps) {
-                setDirection(settings.setPoint >= 0 ? 1 : -1);
-                setStepFrequency((uint32_t)steps_per_sec);
-                lastSteps = steps_per_sec;
-            }
-            stepVelocity = settings.setPoint;
-        } break;
-    }
 }
 
 float Filter(float New, float Current, float alpha, float maxValue)

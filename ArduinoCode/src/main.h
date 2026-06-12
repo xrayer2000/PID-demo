@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <config.h>
 #include <Wire.h>
 #include <PressButton.h>
 #include <RotaryEncoderAccel.h>
@@ -19,27 +20,27 @@
 //--------------------------------------------------------------------------------------------------
 // Stepper pins
 //--------------------------------------------------------------------------------------------------
-#define EN_PIN     PA6
-#define DIR_PIN_1  PA0
-#define STEP_PIN_1 PA1
-#define DIR_PIN_2  PA2
-#define STEP_PIN_2 PA3
-#define MS1_PIN    PA15
-#define MS2_PIN    PB3
-#define MS3_PIN    PB4
+#define EN_PIN     PA_6
+#define DIR_PIN_1  PA_0
+#define STEP_PIN_1 PA_1
+#define DIR_PIN_2  PA_2
+#define STEP_PIN_2 PA_3
+#define MS1_PIN    PB_12
+#define MS2_PIN    PB_13
+#define MS3_PIN    PB_14
 
 // I2C pins - AS5600
-#define SDA_PIN_1  PB11
-#define SCL_PIN_1  PB10
+#define SDA_PIN_1  PB_3
+#define SCL_PIN_1  PB_10
 
 // I2C pins - OLED
-#define SDA_PIN_0  PB9
-#define SCL_PIN_0  PB8
+#define SDA_PIN_0  PB_9
+#define SCL_PIN_0  PB_8
 
 // Rotary encoder / button pins
-#define confirmBtnPin PB7
-#define outputA       PB6
-#define outputB       PB5
+#define confirmBtnPin PB_7
+#define outputA       PB_6
+#define outputB       PB_5
 
 //--------------------------------------------------------------------------------------------------
 // Display
@@ -99,7 +100,6 @@ extern RotaryEncoderAccel encoder;
 extern PressButton btnOk;
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C display1;
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C display2;
-extern PID_Controller pid;
 extern HardwareTimer *stepTimer;
 
 //--------------------------------------------------------------------------------------------------
@@ -108,13 +108,6 @@ extern HardwareTimer *stepTimer;
 extern Mysettings settings;
 extern Mysettings oldSettings;
 
-extern volatile uint32_t stepFrequency;
-
-extern float angle;
-extern float stepVelocity;
-extern float absoluteAngle;
-extern float rpm_measured;
-extern float passedTime;
 extern float timeLastTouched;
 extern bool  displaySleeping;
 
@@ -166,6 +159,11 @@ extern float lastKd;
 extern float lastAmplitude;
 extern float lastPeriod;
 
+//Debug loop Time
+extern uint32_t loopCount;
+extern uint32_t sumLoopTime;
+extern uint32_t last;
+
 //--------------------------------------------------------------------------------------------------
 // Function declarations
 //--------------------------------------------------------------------------------------------------
@@ -216,21 +214,17 @@ void updateSettings();
 // Sensors
 void updateSensorValues();
 void initAS5600();
-inline uint16_t readAS5600RawFast();
+uint16_t readAS5600RawFast();
 
 // Stepper / motor
 void stepISR();
 void initStepTimer();
-void setStepFrequency(uint32_t steps_per_sec);
-void setDirection(int velocity);
-void setAngle();
 void setMicrostepTMC2209(uint16_t microstep);
 void setMicrostepA4988(uint8_t microstep);
 void updateMicrostepCycle();
 void microstepTest();
 
 // Mode
-void updateMode();
 const char* systemModeToString(SystemMode mode);
 
 // Math helpers
