@@ -10,9 +10,22 @@ upload:
 monitor:
 	@pio device monitor -e $(ENV)
 
+plot:
+	@python3 tools/live_plot.py \
+		--port $$(ls -t /dev/ttyACM* | head -1) \
+		--baud 115200 \
+		--axes "1,2" \
+		--group "angle,setPoint" \
+		--group "rpm" \
+		--group "velocity"
+
 flash:
 	@pio run -e $(ENV) --target upload --disable-auto-clean
 	@pio device monitor -e $(ENV)
+
+flash_plot: upload
+	@sleep 1
+	@$(MAKE) plot
 
 clean:
 	@pio run -e $(ENV) --target clean

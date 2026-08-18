@@ -7,7 +7,7 @@ PID_Controller::PID_Controller(float* input, float* output, float* setpoint)
     U = output;
     AngleSet = setpoint;
 
-    kp = 30.0;
+    kp = 1.0;
     ki = 0.0;
     kd = 0.0;
 

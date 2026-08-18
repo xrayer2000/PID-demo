@@ -15,14 +15,18 @@ void taskControl(void *pvParameters)
         const float UPDATE_INTERVAL1 = 0.05f;
         bool shouldUpdate1 = (passedTime - previousPassedTime1 >= UPDATE_INTERVAL1);
 
-        updateAxis(axis, pid);
+        updateAxis(axis1, pid1);
+        updateAxis(axis2, pid2);
 
         if (shouldUpdate1) {
-            uint32_t ms       = millis();
-            uint32_t sec      = ms / 1000;
-            uint32_t centisec = (ms % 1000) / 10;
+            // Serial.print(">plotDt:");
+            // Serial.println(passedTime - previousPassedTime1);
 
-            printAxisStatus(axis);
+
+            printAllAxisStatus();
+            // plotAxisStatus(axis1);
+            // plotAxisStatus(axis1);
+            // plotAxisStatus(axis2);
 
             // Serial.print("Loop: ");
             // Serial.println(avgLoopTime);
@@ -30,6 +34,6 @@ void taskControl(void *pvParameters)
             previousPassedTime1 = passedTime;
         }
 
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(TASK_500HZ));
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(TASK_200HZ));
     }
 }
