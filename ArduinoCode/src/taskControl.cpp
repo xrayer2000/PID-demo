@@ -15,8 +15,8 @@ void taskControl(void *pvParameters)
         const float UPDATE_INTERVAL1 = 0.05f;
         bool shouldUpdate1 = (passedTime - previousPassedTime1 >= UPDATE_INTERVAL1);
 
-        updateAxis(axis1, pid1);
-        updateAxis(axis2, pid2);
+        updateAxis(axis1, posPid1, velPid1);
+        updateAxis(axis2, posPid2, velPid2);
 
         if (shouldUpdate1) {
             // Serial.print(">plotDt:");
@@ -24,7 +24,6 @@ void taskControl(void *pvParameters)
 
 
             printAllAxisStatus();
-            // plotAxisStatus(axis1);
             // plotAxisStatus(axis1);
             // plotAxisStatus(axis2);
 

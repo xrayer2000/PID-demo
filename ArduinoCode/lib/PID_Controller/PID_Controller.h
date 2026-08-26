@@ -17,16 +17,29 @@ public:
     void SetStepsPerRev(uint16_t steps) { stepsPerRev = steps; }
     bool Compute();
 
+    float getInput() const;
+    float getSetPoint() const;
+    float getError() const;
+    float getP() const;
+    float getI() const;
+    float getD() const;
+    float getOutput() const;
+    float getKp() const;
+    float getKi() const;
+    float getKd() const;
+
 private:
     float* T;
     float* U;
-    float* AngleSet;
+    float* setPoint;
 
     float kp;
     float ki;
     float kd;
 
-    float I;
+    float P = 0.0f;
+    float I = 0.0f;
+    float D = 0.0f;
     float Imax;
 
     float lastInput;

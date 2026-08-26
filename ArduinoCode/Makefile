@@ -12,12 +12,10 @@ monitor:
 
 plot:
 	@python3 tools/live_plot.py \
-		--port $$(ls -t /dev/ttyACM* | head -1) \
+		--port /dev/ttyACM0 \
 		--baud 115200 \
 		--axes "1,2" \
-		--group "angle,setPoint" \
-		--group "rpm" \
-		--group "velocity"
+
 
 flash:
 	@pio run -e $(ENV) --target upload --disable-auto-clean

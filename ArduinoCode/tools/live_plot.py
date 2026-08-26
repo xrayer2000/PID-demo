@@ -77,6 +77,9 @@ def main():
                           'to every base name to find the matching telemetry variable.')
     args = ap.parse_args()
 
+    if not args.group:
+        args.group = ['pos', 'targetSetPoint', 'vel', 'CmdVel']
+
     ser = serial.Serial(args.port, args.baud, timeout=0.1)
     data = defaultdict(deque)
     lock = threading.Lock()

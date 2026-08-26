@@ -48,16 +48,16 @@ void initTMC2209()
     driver1.mstep_reg_select(true);
     driver2.mstep_reg_select(true);
 
-    axis1.settings.microsteps = 8;
-    axis2.settings.microsteps = 8;
+    // axis1.settings.microsteps = 4;
+    // axis2.settings.microsteps = 4;
     driver1.microsteps(axis1.settings.microsteps);
     driver2.microsteps(axis2.settings.microsteps);
 
-    // driver1.intpol(true); // interpolerar internt till 256 mikrosteg ändå → fortsatt mjuk rörelse
-    // driver2.intpol(true); // interpolerar internt till 256 mikrosteg ändå → fortsatt mjuk rörelse
+    // driver1.intpol(true); // interpolerar internt 
+    // driver2.intpol(true); // interpolerar internt 
 
-    driver1.en_spreadCycle(true);  
-    driver2.en_spreadCycle(true);
+    driver1.en_spreadCycle(false);   //stronger torque at low speeds, but more noise
+    driver2.en_spreadCycle(false);  //stronger torque at low speeds, but more noise
 
     driver1.pdn_disable(true);
     driver2.pdn_disable(true);

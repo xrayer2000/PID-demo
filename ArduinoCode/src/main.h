@@ -8,7 +8,6 @@
 #include <EEPROM.h>
 #include <U8g2lib.h>
 #include "PID_Controller.h"
-#include <AS5600.h>
 // FreeRTOS - must be first before any other FreeRTOS headers
 #include <STM32FreeRTOS.h>
 
@@ -20,22 +19,35 @@
 //--------------------------------------------------------------------------------------------------
 // Stepper pins
 //--------------------------------------------------------------------------------------------------
-#define EN_PIN     PA_6
-#define DIR_PIN_1  PA_0
-#define STEP_PIN_1 PA_1
-#define DIR_PIN_2  PA_2
-#define STEP_PIN_2 PA_3
-#define MS1_PIN    PB_12
-#define MS2_PIN    PB_13
-#define MS3_PIN    PB_14
+#define DIR_PIN_1  PA_4
+#define STEP_PIN_1 PA_5
+#define DIR_PIN_2  PA_6
+#define STEP_PIN_2 PA_7
+#define EN_PIN     PB_0
 
-// I2C pins - AS5600
-#define SDA_PIN_1  PB_3
-#define SCL_PIN_1  PB_10
+//--------------------------------------------------------------------------------------------------
+// UART for TMC2209 (Full duplex)
+//--------------------------------------------------------------------------------------------------
+#define UART1_TX   PA_9
+#define UART1_RX   PA_10
+#define UART2_TX   PA_2
+#define UART2_RX   PA_3
 
-// I2C pins - OLED
-#define SDA_PIN_0  PB_9
-#define SCL_PIN_0  PB_8
+// I2C_1 pins - OLED
+#define SDA_PIN_1  PB_9
+#define SCL_PIN_1  PB_8
+
+// SPI pins - OLED 2 (hardware SPI2)
+#define OLED2_SDA_PIN_1   PB_9   // SPI2 MOSI
+#define OLED2_SCL_PIN_1   PB_8   // SPI2 SCK
+
+// I2C_2 pins - AS5600 1
+#define SDA_PIN_2  PB_3
+#define SCL_PIN_2  PB_10
+
+// I2C_3 pins - AS5600 2
+#define SDA_PIN_3  PB_4
+#define SCL_PIN_3  PA_8
 
 // Rotary encoder / button pins
 #define confirmBtnPin PB_7
@@ -61,34 +73,25 @@
 #define AS5600_RAW_ANGLE 0x0C
 
 //--------------------------------------------------------------------------------------------------
-// System mode
+// Unit conversion
 //--------------------------------------------------------------------------------------------------
-enum SystemMode {
-    MODE_OSCILATION,
-    MODE_SETPOINT,
-    MODE_RPM
-};
+constexpr float RPM_TO_DEG_S = 6.0f;   // 360° / 60s
 
 //--------------------------------------------------------------------------------------------------
 // Menu page type
 //--------------------------------------------------------------------------------------------------
 enum pageType {
     MENU_ROOT,
-    MENU_SYSTEM_MODE
+    MENU_AXIS_MODE,
+    MENU_SELECTED_AXIS
 };
 
 //--------------------------------------------------------------------------------------------------
 // Settings struct
 //--------------------------------------------------------------------------------------------------
-struct Mysettings {
-    float setPoint          = 10.0f;
-    float Kp                = 50.0f;
-    float Ki                = 0.0f;
-    float Kd                = 2.0f;
-    float amplitude         = 20.0f;
-    float period            = 2.0f;
-    float timeBeforeDisable = 2.0f;
-    SystemMode systemMode   = MODE_OSCILATION;
+struct GlobalSettings {
+
+    float timeBeforeDisable = 5.0f;
     uint16_t settingsCheckValue = SETTINGS_CHKVAL;
 };
 
@@ -96,23 +99,21 @@ struct Mysettings {
 // External objects (defined in main.cpp)
 //--------------------------------------------------------------------------------------------------
 extern TwoWire Wire1;
+extern TwoWire Wire2;
 extern RotaryEncoderAccel encoder;
 extern PressButton btnOk;
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C display1;
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C display2;
-extern HardwareTimer *stepTimer;
 
 //--------------------------------------------------------------------------------------------------
 // External globals
 //--------------------------------------------------------------------------------------------------
-extern Mysettings settings;
-extern Mysettings oldSettings;
+extern GlobalSettings settings;
+extern GlobalSettings oldSettings;
 
 extern float timeLastTouched;
 extern bool  displaySleeping;
-
-extern uint8_t microstepping;
-extern float   steps_per_rev;
+extern bool updateDisp2Flag;
 
 // Display layout constants
 extern uint8_t DISP_ITEM_ROWS;
@@ -148,17 +149,6 @@ extern uint32_t now;
 extern uint32_t loopTime;
 extern uint32_t avgLoopTime;
 
-// Sensor
-extern unsigned long lastReadTime;
-
-// Last-known settings (for change detection)
-extern float lastSetPoint;
-extern float lastKp;
-extern float lastKi;
-extern float lastKd;
-extern float lastAmplitude;
-extern float lastPeriod;
-
 //Debug loop Time
 extern uint32_t loopCount;
 extern uint32_t sumLoopTime;
@@ -175,7 +165,8 @@ void loop();
 // Menu pages
 void page_MenuRoot();
 void page_MenuMode();
-void page_MENU_SYSTEM_MODE();
+void page_MENU_AXIS_MODE();
+void page_MENU_SELECTED_AXIS();
 
 // Menu internals
 void initMenuPage(String title, uint8_t itemCount);
@@ -194,15 +185,18 @@ void FlashPointer();
 void printOnOff(bool val);
 void printChars(uint8_t cnt, char c);
 void printInt32_tAtWidth(int32_t value, uint8_t width, const char* c);
+void printFloatAtWidth(float value, uint8_t width, const char* c, uint8_t decimals);
 void printDoubleAtWidth(double value, uint8_t width, const char* c, uint8_t decimals = 1);
 void printStringAtWidth(const char* str, uint8_t width);
 uint8_t getInt32_tCharCnt(int32_t value);
+uint8_t getFloatCharCnt(float value);
 uint8_t getDoubleCharCnt(double value);
 
 // Display 2 tools
 void updateDisp2();
 void printCharsDisplay2(uint8_t cnt, char c);
 void printInt32_tAtWidthDisplay2(int32_t value, uint8_t width, char c);
+void printFloatAtWidthDisplay2(float value, uint8_t width, char c, uint8_t decimals);
 void printDoubleAtWidthDisplay2(double value, uint8_t width, char c);
 
 // Settings
@@ -210,22 +204,6 @@ void set_Default();
 void sets_Load();
 void sets_Save();
 void updateSettings();
-
-// Sensors
-void updateSensorValues();
-void initAS5600();
-uint16_t readAS5600RawFast();
-
-// Stepper / motor
-void stepISR();
-void initStepTimer();
-void setMicrostepTMC2209(uint16_t microstep);
-void setMicrostepA4988(uint8_t microstep);
-void updateMicrostepCycle();
-void microstepTest();
-
-// Mode
-const char* systemModeToString(SystemMode mode);
 
 // Math helpers
 float Filter(float New, float Current, float alpha, float maxValue);

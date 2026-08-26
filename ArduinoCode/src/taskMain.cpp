@@ -25,7 +25,7 @@ void taskMain(void *pvParameters)
         if (loopCount == 1)
             last = now;
 
-        if (loopCount >= 1000) {
+        if (loopCount >= 100) {
             sumLoopTime = now - last;
             avgLoopTime = sumLoopTime / (loopCount - 1);
             loopCount   = 0;
@@ -33,6 +33,6 @@ void taskMain(void *pvParameters)
         }
         //----------------------------------------------------------------------------------
 
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(TASK_50HZ));
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(TASK_100HZ));
     }
 }

@@ -63,6 +63,6 @@ void taskDisplay(void *pvParameters)
         }
 
         // Run at 20 Hz
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(TASK_50HZ));
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(TASK_100HZ));
     }
 }

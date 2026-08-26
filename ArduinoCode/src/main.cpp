@@ -3,10 +3,12 @@
 #include "taskMain.h"
 #include "taskControl.h"
 #include "taskDisplay.h"
+#include "TMC2209/tmc2209.h"
 //--------------------------------------------------------------------------------------------------
 // Object definitions
 //--------------------------------------------------------------------------------------------------
 TwoWire Wire1(1);  // I2C2
+TwoWire Wire2(2);  // I2C3
 
 RotaryEncoderAccel encoder(outputA, outputB);  // GPIO32 och GPIO33 på ESP32
 PressButton btnOk(confirmBtnPin, 10); //debounce (ISR-attached inside library)
@@ -17,14 +19,8 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 //--------------------------------------------------------------------------------------------------
 // Global variable definitions
 //--------------------------------------------------------------------------------------------------
-Mysettings settings;
-Mysettings oldSettings;
-
-HardwareTimer *stepTimer = nullptr;
-
-//stepper motor parameters
-uint8_t microstepping = 16;  // 16, 32, 64, 128 // there is no 8 microstepping mode on the TMC2209
-float   steps_per_rev = 200.0f * 16;
+GlobalSettings settings;
+GlobalSettings oldSettings;
 
 // Display layout
 uint8_t DISP_ITEM_ROWS  = 0;
@@ -40,6 +36,7 @@ uint8_t DISP2_CHAR_Y     = 0;
 enum pageType currPage   = MENU_ROOT;
 bool    updateAllItems   = true;
 bool    updateItemValue  = false;
+bool    updateDisp2Flag = false;
 uint8_t itemCnt          = 0;
 int8_t  cursorPos        = 0;
 uint8_t saveCursorPos    = 0;
@@ -70,14 +67,6 @@ uint32_t avgLoopTime = 0;
 //sensors
 unsigned long lastReadTime  = 0;
 
-// Last-known settings (change detection)
-float lastSetPoint  = 0.0f;
-float lastKp        = 0.0f;
-float lastKi        = 0.0f;
-float lastKd        = 0.0f;
-float lastAmplitude = 0.0f;
-float lastPeriod    = 0.0f;
-
 //==================================================================================================
 // ISR för båda pins, som anropas vid ändring (rising/falling)
 //==================================================================================================
@@ -92,17 +81,18 @@ void handleInterrupt()
 void setup()
 {
     Serial.begin(115200);
+    delay(1000);
     // while(!Serial);
     Serial.println("Boot");
 
+    
+
+    // 1. Pin modes first
     pinMode(EN_PIN,     OUTPUT);
     pinMode(STEP_PIN_1, OUTPUT);
     pinMode(DIR_PIN_1,  OUTPUT);
     pinMode(STEP_PIN_2, OUTPUT);
     pinMode(DIR_PIN_2,  OUTPUT);
-    pinMode(MS1_PIN,    OUTPUT);
-    pinMode(MS2_PIN,    OUTPUT);
-    pinMode(MS3_PIN,    OUTPUT);
 
     // pinMode(SDA_PIN_0, INPUT_PULLUP);
     // pinMode(SCL_PIN_0, INPUT_PULLUP);
@@ -111,7 +101,38 @@ void setup()
     pinMode(outputA,       INPUT_PULLUP);
     pinMode(outputB,       INPUT_PULLUP);
 
-    setMicrostepTMC2209(microstepping);
+    // setMicrostepA4988(1);
+    // microstepTest();
+    initStepTimer(axis1, TIM2, stepISR1);
+    initStepTimer(axis2, TIM3, stepISR2);
+    
+    // 2. Enable all stepper drivers
+    digitalWrite(EN_PIN, LOW); 
+    delay(100); // Allow time for drivers to enable
+    
+    // 3. TMC2209
+    // setMicrostepTMC2209(microstepping);
+    initTMC2209();
+
+    initAxisSettings(axis1, MODE_velControl, -10.0f, 5.0f, 0.0f, 0.0f, 90.0f, 4.0f);
+    initAxisSettings(axis2, MODE_posControl_OSC, 10.0f, 25.0f, 0.0f, 0.0f, 360.0f, 7.0f);
+
+    axis1.posProfile.type = TrapProfile::Type::POSITION;
+    axis1.velProfile.type = TrapProfile::Type::VELOCITY;
+
+    axis2.posProfile.type = TrapProfile::Type::POSITION;
+    axis2.velProfile.type = TrapProfile::Type::VELOCITY;
+
+    updatePIDTunings(axis1, posPid1);
+    updatePIDTunings(axis1, velPid1);
+    updatePIDTunings(axis2, posPid2);
+    updatePIDTunings(axis2, velPid2);
+
+    // 4. Init PID controllers
+    initPID(posPid1, axis1);
+    initPID(velPid1, axis1);
+    initPID(posPid2, axis2);
+    initPID(velPid2, axis2);       
 
     // Initialize encoder interrupts (confirm button interrupt disabled)
     attachInterrupt(digitalPinToInterrupt(outputA), handleInterrupt, CHANGE);
@@ -120,17 +141,28 @@ void setup()
     // Initialize button ISR
     btnOk.init();
 
-    // -------- I2C - Oled--------
-    Wire.setSDA(SDA_PIN_0);
-    Wire.setSCL(SCL_PIN_0);
+    // -------- I2C - Oled display1 and display2--------
+    Wire.setSDA(SDA_PIN_1);
+    Wire.setSCL(SCL_PIN_1);
     Wire.begin();
     Wire.setClock(400000);
 
     // -------- I2C - AS5600--------
-    Wire1.setSDA(SDA_PIN_1);
-    Wire1.setSCL(SCL_PIN_1);
+    Wire1.setSDA(SDA_PIN_2);
+    Wire1.setSCL(SCL_PIN_2);
     Wire1.begin();
     Wire1.setClock(400000);
+    sensor1.begin();
+    initSensor(axis1);
+    
+    // -------- I2C - AS5600--------
+    Wire2.setSDA(SDA_PIN_3);
+    Wire2.setSCL(SCL_PIN_3);
+    Wire2.begin();
+    Wire2.setClock(400000);
+    sensor2.begin();
+    initSensor(axis2);
+    sensor2.setDirection(AS5600_COUNTERCLOCK_WISE);
 
     Serial.println("Scanning Wire...");
     for (uint8_t addr = 1; addr < 127; addr++) {
@@ -154,6 +186,20 @@ void setup()
     }
     Serial.println("Wire1 done");
 
+    Serial.println("Scanning Wire2...");
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire2.beginTransmission(addr);
+        uint8_t error = Wire2.endTransmission();
+        if (error == 0) {
+            Serial.print("Found device at 0x");
+            Serial.println(addr, HEX);
+        }
+    }
+    Serial.println("Wire2 done");
+
+    sets_Load();
+
+    // -------- I2C - Display1--------
     display1.setI2CAddress(0x3C << 1);
     display1.begin();
     display1.setBusClock(400000);
@@ -166,6 +212,7 @@ void setup()
     CHAR_X          = display1.getMaxCharWidth()  + 2; //margin
     CHAR_Y          = display1.getMaxCharHeight() + 2; //margin
 
+    // -------- I2C - Display2--------
     display2.setI2CAddress(0x3D << 1);
     display2.begin();
     display2.setBusClock(400000);
@@ -178,26 +225,14 @@ void setup()
     DISP2_CHAR_X     = display2.getMaxCharWidth() + 0; //margin
     DISP2_CHAR_Y     = (SCREEN_HEIGHT / DISP2_ITEM_ROWS) + 0; //margin
 
-    sets_Load();
-
     last = micros();
 
-    lastSetPoint  = settings.setPoint;
-    lastKp        = settings.Kp;
-    lastKi        = settings.Ki;
-    lastKd        = settings.Kd;
-    lastAmplitude = settings.amplitude;
-    lastPeriod    = settings.period;
-
-    pid.SetOutputLimits(-15000, 15000);
-    pid.SetIntegralLimit(10000);
-
-    initAS5600();
-    // setMicrostepA4988(1);
-    // microstepTest();
-    initStepTimer();
-
-    digitalWrite(EN_PIN, LOW); // Enable all stepper drivers
+    selectedAxis->lastSetPoint  = selectedAxis->settings.targetSetPoint;
+    selectedAxis->lastKp        = selectedAxis->settings.Kp;
+    selectedAxis->lastKi        = selectedAxis->settings.Ki;
+    selectedAxis->lastKd        = selectedAxis->settings.Kd;
+    selectedAxis->lastAmplitude = selectedAxis->settings.amplitude;
+    selectedAxis->lastPeriod    = selectedAxis->settings.period;
 
     // Create main task
     xTaskCreate(taskMain,    "Main",    512,  nullptr, 2, nullptr);
@@ -210,20 +245,15 @@ void setup()
     vTaskStartScheduler();
 }
 
-//==================================================================================================
-// Loop
-//==================================================================================================
-void loop(){}
+void loop(){} // not used
 
-//==================================================================================================
-// Menu pages
-//==================================================================================================
 void page_MenuRoot() //=================================================ROOT_MENU============================================
 {
     if (initPage) {
         cursorPos  = root_pntrPos;
         dispOffset = root_dispOffset;
-        initMenuPage(F("MAIN MENU"), 7);
+        memset(changeValues, 0, sizeof(changeValues));
+        initMenuPage(F("MAIN MENU"), 8);
         initPage = false;
     }
 
@@ -232,51 +262,54 @@ void page_MenuRoot() //=================================================ROOT_MEN
         changeValues[cursorPos] = !changeValues[cursorPos];
         edditing = !edditing;
     }
-
-         if (changeValues[0]) { incrementDecrementFloat(&settings.setPoint, 10.0, -20000.0, 20000.0); }
-    else if (changeValues[1])   incrementDecrementFloat(&settings.Kp,       1.0,  0.0, 100.0);
-    else if (changeValues[2])   incrementDecrementFloat(&settings.Ki,       0.5,  0.0,  50.0);
-    else if (changeValues[3])   incrementDecrementFloat(&settings.Kd,       1.0,  0.0, 100.0);
-    else if (changeValues[4]) { currPage = MENU_SYSTEM_MODE; initPage = true; updateAllItems = true; changeValues[4] = false; edditing = false; return; }
-    else if (changeValues[5])   incrementDecrementFloat(&settings.amplitude, 5.0, 0.0, 20000.0);
-    else if (changeValues[6])   incrementDecrementFloat(&settings.period,    0.1, 0.0,    20.0);
+         if (changeValues[0]) { currPage = MENU_SELECTED_AXIS; initPage = true; updateAllItems = true; edditing = false; return; }
+    else if (changeValues[1]) { incrementDecrementFloat(&selectedAxis->settings.targetSetPoint, 10.0, -20000.0, 20000.0); }
+    else if (changeValues[2])   incrementDecrementFloat(&selectedAxis->settings.Kp,       0.25,  0.0, 50.0);
+    else if (changeValues[3])   incrementDecrementFloat(&selectedAxis->settings.Ki,       0.05,  0.0,  20.0);
+    else if (changeValues[4])   incrementDecrementFloat(&selectedAxis->settings.Kd,       0.05,  0.0, 10.0);
+    else if (changeValues[5]) { currPage = MENU_AXIS_MODE; initPage = true; updateAllItems = true; edditing = false; return; }
+    else if (changeValues[6])   incrementDecrementFloat(&selectedAxis->settings.amplitude, 5.0, 0.0, 1440.0);
+    else if (changeValues[7])   incrementDecrementFloat(&selectedAxis->settings.period,    0.1, 0.0,    60.0);
     else
         doPointerNavigation();
 
     if (!(updateAllItems | updateItemValue)) return;
 
-    for (uint8_t i = 1; i <= 7; i++) {
+    for (uint8_t i = 1; i <= 8; i++) {
         if (menuItemPrintable(1, i)) {
             switch (i) {
-                case 1: display1.print(F("Setpoint:             ")); break;
-                case 2: display1.print(F("Kp:                   ")); break;
-                case 3: display1.print(F("Ki:                   ")); break;
-                case 4: display1.print(F("Kd:                   ")); break;
-                case 5: display1.print(F("Mode:                 ")); break;
-                case 6: display1.print(F("Amplitude:            ")); break;
-                case 7: display1.print(F("Period:               ")); break;
+                case 1: display1.print(F("Selected:             ")); break;
+                case 2: display1.print(F("Setpoint:             ")); break;
+                case 3: display1.print(F("Kp:                   ")); break;
+                case 4: display1.print(F("Ki:                   ")); break;
+                case 5: display1.print(F("Kd:                   ")); break;
+                case 6: display1.print(F("Mode:                 ")); break;
+                case 7: display1.print(F("Amplitude:            ")); break;
+                case 8: display1.print(F("Period:               ")); break;
             }
         }
         if (menuItemPrintable(10, i)) {
             switch (i) {
-                case 1: printDoubleAtWidth(settings.setPoint,  3, " ");      break;
-                case 2: printDoubleAtWidth(settings.Kp,        4, " ");      break;
-                case 3: printDoubleAtWidth(settings.Ki,        4, " ", 2);   break;
-                case 4: printDoubleAtWidth(settings.Kd,        4, " ", 2);   break;
-                case 5: printStringAtWidth(systemModeToString(settings.systemMode), 4); break;
-                case 6: printDoubleAtWidth(settings.amplitude, 4, " ", 2);   break;
-                case 7: printDoubleAtWidth(settings.period,    4, " ", 2);   break;
+                case 1: printStringAtWidth(axisIdToString(selectedAxis->axisId), 4);       break;
+                case 2: printDoubleAtWidth(selectedAxis->settings.targetSetPoint,  3, " ");      break;
+                case 3: printDoubleAtWidth(selectedAxis->settings.Kp,        4, " ");      break;
+                case 4: printDoubleAtWidth(selectedAxis->settings.Ki,        4, " ", 2);   break;
+                case 5: printDoubleAtWidth(selectedAxis->settings.Kd,        4, " ", 2);   break;
+                case 6: printStringAtWidth(axisModeToString(selectedAxis->settings.axisMode), 4); break;
+                case 7: printDoubleAtWidth(selectedAxis->settings.amplitude, 4, " ", 2);   break;
+                case 8: printDoubleAtWidth(selectedAxis->settings.period,    4, " ", 2);   break;
             }
         }
     }
 }
 
-void page_MENU_SYSTEM_MODE() //=================================================SYSTEM_MODE============================================
+void page_MENU_AXIS_MODE() //=================================================AXIS_MODE============================================
 {
     if (initPage) {
         cursorPos  = 0;
         dispOffset = 0;
-        initMenuPage(F("SYSTEM MODE"), 4);
+        memset(changeValues, 0, sizeof(changeValues));
+        initMenuPage(F("AXIS CONTROL MODE"), 5);
         initPage = false;
     }
 
@@ -285,22 +318,58 @@ void page_MENU_SYSTEM_MODE() //=================================================
         changeValues[cursorPos] = true;
     }
 
-         if (changeValues[0]) { settings.systemMode = MODE_OSCILATION; currPage = MENU_ROOT; initPage = true; /*clear the flag so we don't re-enter*/ changeValues[0] = false; return; }
-    else if (changeValues[1]) { settings.systemMode = MODE_SETPOINT;   currPage = MENU_ROOT; initPage = true; changeValues[1] = false; return; }
-    else if (changeValues[2]) { settings.systemMode = MODE_RPM;        currPage = MENU_ROOT; initPage = true; changeValues[2] = false; return; }
-    else if (changeValues[3]) {                                          currPage = MENU_ROOT; initPage = true; changeValues[3] = false; return; }
+         if (changeValues[0]) { selectedAxis->settings.axisMode = MODE_posControl;     currPage = MENU_ROOT; initPage = true; return; }
+    else if (changeValues[1]) { selectedAxis->settings.axisMode = MODE_posControl_OSC; currPage = MENU_ROOT; initPage = true; return; }
+    else if (changeValues[2]) { selectedAxis->settings.axisMode = MODE_velControl;     currPage = MENU_ROOT; initPage = true; return; }
+    else if (changeValues[3]) { selectedAxis->settings.axisMode = MODE_velControl_OSC; currPage = MENU_ROOT; initPage = true; return; }
+    else if (changeValues[4]) {                                                        currPage = MENU_ROOT; initPage = true; return; }
     else
         doPointerNavigation();
 
     if (!(updateAllItems | updateItemValue)) return;
 
-    for (uint8_t i = 1; i <= 4; i++) {
+    for (uint8_t i = 1; i <= 5; i++) {
         if (menuItemPrintable(1, i)) {
             switch (i) {
-                case 1: display1.print(F("OSCILATION")); break;
-                case 2: display1.print(F("SETPOINT  ")); break;
-                case 3: display1.print(F("RPM       ")); break;
-                case 4: display1.print(F("Back      ")); break;
+                case 1: display1.print(F("Pos Control     ")); break;
+                case 2: display1.print(F("Pos Control_OSC ")); break;
+                case 3: display1.print(F("Vel Control     ")); break;
+                case 4: display1.print(F("Vel Control_OSC ")); break;
+                case 5: display1.print(F("Back           ")); break;
+            }
+        }
+    }
+}
+
+void page_MENU_SELECTED_AXIS() //=================================================SELECTED_AXIS============================================
+{
+    if (initPage) {
+        cursorPos  = 0;
+        dispOffset = 0;
+        memset(changeValues, 0, sizeof(changeValues));
+        initMenuPage(F("SELECTED AXIS"), 3);
+        initPage = false;
+    }
+
+    if (btnOk.Pressed()) {
+        FlashPointer();
+        changeValues[cursorPos] = true;
+    }
+
+         if (changeValues[0]) { selectedAxis = &axis1; currPage = MENU_ROOT; initPage = true; return; }
+    else if (changeValues[1]) { selectedAxis = &axis2; currPage = MENU_ROOT; initPage = true; return; }
+    else if (changeValues[2]) {                        currPage = MENU_ROOT; initPage = true; return; }
+    else
+        doPointerNavigation();
+
+    if (!(updateAllItems | updateItemValue)) return;
+
+    for (uint8_t i = 1; i <= 3; i++) {
+        if (menuItemPrintable(1, i)) {
+            switch (i) {
+                case 1: display1.print(F("AXIS 1    ")); break;
+                case 2: display1.print(F("AXIS 2    ")); break;
+                case 3: display1.print(F("Back      ")); break;
             }
         }
     }
@@ -413,7 +482,7 @@ void incrementDecrementFloat(float *v, float amount, float min, float max)
         // Serial.print(",\tNew Value: ");
         // Serial.println(newValue);
 
-        //updateItemValue = true;
+        // updateItemValue = true;
         timeLastTouched = millis() / 60000.0f;
     }
 
@@ -476,31 +545,22 @@ void menuItemPrintableDisp2(uint8_t xPos, uint8_t yPos)
 }
 
 //======================================================TOOLS_display========================================================
-void printPointer()
-{
-    //Serial.println("printPointer");
-    display1.drawStr(0, 1 * CHAR_Y, " ");
-    display1.drawStr(0, 2 * CHAR_Y, " ");
-    display1.drawStr(0, 3 * CHAR_Y, " ");
-    display1.drawStr(0, 4 * CHAR_Y, " ");
-    display1.drawStr(0, 5 * CHAR_Y, " ");
-    display1.drawStr(0, (cursorPos - dispOffset + 1) * CHAR_Y, "*");
-    display1.sendBuffer();
+void printPointer(){
+  //Serial.println("printPointer");
+  for(uint8_t i=1; i<=DISP_ITEM_ROWS; i++) display1.drawStr(0, i*CHAR_Y, " ");
+  display1.drawStr(0, (cursorPos - dispOffset + 1)*CHAR_Y, "*");
+  updateAllItems = true;
+  // display1.sendBuffer();
 }
+void FlashPointer(){
+  timeLastTouched = millis()/1000.0/60.0;
+  for(uint8_t i=1; i<=DISP_ITEM_ROWS; i++) display1.drawStr(0, i*CHAR_Y, " ");
+  updateAllItems = true;
 
-void FlashPointer()
-{
-    display1.drawStr(0, 1 * CHAR_Y, " ");
-    display1.drawStr(0, 2 * CHAR_Y, " ");
-    display1.drawStr(0, 3 * CHAR_Y, " ");
-    display1.drawStr(0, 4 * CHAR_Y, " ");
-    display1.drawStr(0, 5 * CHAR_Y, " ");
-    display1.sendBuffer();                  //nytt
-
-    delay(100);
-    //Serial.println("FlashPointer");
-    display1.drawStr(0, (cursorPos - dispOffset + 1) * CHAR_Y, "*");
-    display1.sendBuffer();                  //nytt
+  delay(100);
+  //Serial.println("FlashPointer");
+  display1.drawStr(0, (cursorPos - dispOffset + 1)*CHAR_Y, "*");
+  updateAllItems = true;
 }
 
 void printOnOff(bool val)
@@ -525,6 +585,14 @@ uint8_t getInt32_tCharCnt(int32_t value)
     return cnt;
 }
 
+uint8_t getFloatCharCnt(float value)
+{
+    if (value == 0) { return 1; }
+    uint32_t tensCalc = 10; uint8_t cnt = 1;
+    while (tensCalc <= value && cnt < 20) { tensCalc *= 10; cnt += 1; }
+    return cnt;
+}
+
 uint8_t getDoubleCharCnt(double value)
 {
     if (value == 0) { return 1; }
@@ -538,6 +606,14 @@ void printInt32_tAtWidth(int32_t value, uint8_t width, const char* c)
     display1.print(value);
     display1.print(c);
     printChars(width - getInt32_tCharCnt(value), ' ');
+}
+
+void printFloatAtWidth(float value, uint8_t width, const char* c, uint8_t decimals)
+{
+    char buf[10];
+    dtostrf(value, width - getFloatCharCnt(value), decimals, buf); // 1 decimal
+    display1.print(buf);
+    display1.print(c);
 }
 
 void printDoubleAtWidth(double value, uint8_t width, const char* c, uint8_t decimals)
@@ -558,38 +634,53 @@ void printStringAtWidth(const char* str, uint8_t width)
     }
 }
 
-const char* systemModeToString(SystemMode mode)
+const char* axisIdToString(AxisId axisId)
+{
+    switch (axisId) {
+        case AXIS_1: return "AXIS 1";
+        case AXIS_2: return "AXIS 2";
+        default:     return "UNKNOWN";
+    }
+}
+
+const char* axisModeToString(AxisMode mode)
 {
     switch (mode) {
-        case MODE_OSCILATION: return "OSCILATION";
-        case MODE_SETPOINT:   return "SETPOINT";
-        case MODE_RPM:        return "RPM";
-        default:              return "UNKNOWN";
+        case MODE_posControl_OSC: return "posControl_OSC";
+        case MODE_posControl:     return "posControl";
+        case MODE_velControl:     return "velControl";
+        case MODE_velControl_OSC: return "velControl_OSC";
+        default:                  return "UNKNOWN";
     }
 }
 
 //======================================================DISPLAY_2======================================================
 void updateDisp2()
 {
+    // display2.clearBuffer();
+    // display2.setCursor(0, 10);
+    // display2.print("AbsoluteAngle: ");
+    // display2.print(axis1.absoluteAngle);
+    // display2.setCursor(0, 22);
+    // display2.print("RPM: ");
+    // display2.print((int32_t)axis1.rpm);
+    // display2.sendBuffer();
+    // display2.clearBuffer();
+
+    // Serial.println("updateDisp2");
     display2.clearBuffer();
-    const __FlashStringHelper* labels[4] = {
-        F("AbsoluteAngle:"),
-        F("RPM:          "),
-        F(":             "),
-        F(":             ")
-    };
 
-    menuItemPrintableDisp2(1,  1); display2.print(F("AbsoluteAngle:"));
-    menuItemPrintableDisp2(15, 1); printInt32_tAtWidthDisplay2(axis.absoluteAngle, 3, ' ');
+    menuItemPrintableDisp2(1,  1); display2.print(F("Angle_Axis1: "));
+    menuItemPrintableDisp2(17, 1); printFloatAtWidthDisplay2(axis1.absPos, 3, ' ', 1);
 
-    menuItemPrintableDisp2(1,  2); display2.print(F("RPM:          "));
-    menuItemPrintableDisp2(15, 2); printInt32_tAtWidthDisplay2((int32_t)axis.rpm, 3, ' ');
+    menuItemPrintableDisp2(1,  2); display2.print(F("Deg/s_Axis1: "));
+    menuItemPrintableDisp2(17, 2); printFloatAtWidthDisplay2(axis1.vel, 3, ' ', 1);
 
-    // menuItemPrintableDisp2(1,3); display2.print(F(":             "));
-    // menuItemPrintableDisp2(15,3); printInt32_tAtWidthDisplay2(2,3,' ');
+    menuItemPrintableDisp2(1,3); display2.print(F("Angle_Axis2: "));
+    menuItemPrintableDisp2(17,3); printFloatAtWidthDisplay2(axis2.absPos, 3, ' ', 1);
 
-    // menuItemPrintableDisp2(1,4); display2.print(F(":             "));
-    // menuItemPrintableDisp2(15,4); printInt32_tAtWidthDisplay2(3,3,' ');
+    menuItemPrintableDisp2(1,4); display2.print(F("Deg/s_Axis2:             "));
+    menuItemPrintableDisp2(17,4); printFloatAtWidthDisplay2(axis2.vel, 3, ' ', 1);
 
     display2.sendBuffer();
     display2.clearBuffer();
@@ -614,6 +705,14 @@ void printInt32_tAtWidthDisplay2(int32_t value, uint8_t width, char c)
         display2.print(' ');
 }
 
+void printFloatAtWidthDisplay2(float value, uint8_t width, char c, uint8_t decimals)
+{
+    char buf[10];
+    dtostrf(value, width - getFloatCharCnt(value), decimals, buf); // 1 decimal
+    display2.print(buf);
+    display2.print(c);
+}
+
 void printDoubleAtWidthDisplay2(double value, uint8_t width, char c)
 {
     char buf[10];
@@ -625,7 +724,7 @@ void printDoubleAtWidthDisplay2(double value, uint8_t width, char c)
 //======================================================TOOLS_settings======================================================
 void set_Default()
 {
-    Mysettings tempSets;
+    GlobalSettings tempSets;
     memcpy(&settings, &tempSets, sizeof settings);
 }
 
@@ -646,130 +745,29 @@ void sets_Save()
 void updateSettings()
 {
     // --- Retune controller ONLY if changed ---
-    if (settings.setPoint != lastSetPoint ||
-        settings.Kp       != lastKp       ||
-        settings.Ki       != lastKi       ||
-        settings.Kd       != lastKd       ||
-        settings.amplitude != lastAmplitude ||
-        settings.period    != lastPeriod)
-    {
-        lastSetPoint  = settings.setPoint;
-        lastKp        = settings.Kp;
-        lastKi        = settings.Ki;
-        lastKd        = settings.Kd;
-        lastAmplitude = settings.amplitude;
-        lastPeriod    = settings.period;
+    if (selectedAxis->settings.targetSetPoint  != selectedAxis->lastSetPoint  ||
+        selectedAxis->settings.Kp        != selectedAxis->lastKp        ||
+        selectedAxis->settings.Ki        != selectedAxis->lastKi        ||
+        selectedAxis->settings.Kd        != selectedAxis->lastKd        ||
+        selectedAxis->settings.amplitude != selectedAxis->lastAmplitude ||
+        selectedAxis->settings.period    != selectedAxis->lastPeriod)
+        {
+            selectedAxis->lastSetPoint  = selectedAxis->settings.targetSetPoint;
+            selectedAxis->lastKp        = selectedAxis->settings.Kp;
+            selectedAxis->lastKi        = selectedAxis->settings.Ki;
+            selectedAxis->lastKd        = selectedAxis->settings.Kd;
+            selectedAxis->lastAmplitude = selectedAxis->settings.amplitude;
+            selectedAxis->lastPeriod    = selectedAxis->settings.period;
 
-        pid.SetTunings(settings.Kp, settings.Ki, settings.Kd);
-        updateAllItems = true;
-    }
+            updatePIDTunings(axis1, posPid1);
+            updatePIDTunings(axis1, velPid1);
+            updatePIDTunings(axis2, posPid2);
+            updatePIDTunings(axis2, velPid2);
+
+            updateAllItems = true;
+        }
 
     //updateAllItems = true;
-}
-
-void initAS5600()
-{
-    Wire1.beginTransmission(AS5600_ADDR);
-    Wire1.write(AS5600_RAW_ANGLE);
-    Wire1.endTransmission();
-}
-
-uint16_t readAS5600RawFast()
-{
-    Wire1.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2);
-    uint16_t high = Wire1.read();
-    uint16_t low  = Wire1.read();
-    return ((high & 0x0F) << 8) | low;
-}
-
-void stepISR()
-{
-    digitalWrite(STEP_PIN_1, HIGH);
-    digitalWrite(STEP_PIN_1, LOW);
-}
-
-void initStepTimer()
-{
-    pinMode(STEP_PIN_1, OUTPUT);
-    stepTimer = new HardwareTimer(TIM2);
-    stepTimer->setOverflow(1000, HERTZ_FORMAT);
-    stepTimer->attachInterrupt(stepISR);
-}
-
-void setMicrostepTMC2209(uint16_t microstep) //this version dont have 1/8 microstep
-{
-    switch (microstep) {
-        case 8:  digitalWrite(MS1_PIN, LOW);  digitalWrite(MS2_PIN, LOW);  break;
-        case 16: digitalWrite(MS1_PIN, HIGH); digitalWrite(MS2_PIN, LOW);  break;
-        case 32: digitalWrite(MS1_PIN, LOW);  digitalWrite(MS2_PIN, HIGH); break;
-        case 64: digitalWrite(MS1_PIN, HIGH); digitalWrite(MS2_PIN, HIGH); break;
-    }
-}
-
-void setMicrostepA4988(uint8_t microstep)
-{
-    switch (microstep) {
-        case 1:  // Full step
-            digitalWrite(MS1_PIN, LOW);  digitalWrite(MS2_PIN, LOW);  digitalWrite(MS3_PIN, LOW);  break;
-        case 2:  // Half step
-            digitalWrite(MS1_PIN, HIGH); digitalWrite(MS2_PIN, LOW);  digitalWrite(MS3_PIN, LOW);  break;
-        case 4:  // Quarter step
-            digitalWrite(MS1_PIN, LOW);  digitalWrite(MS2_PIN, HIGH); digitalWrite(MS3_PIN, LOW);  break;
-        case 8:  // Eighth step
-            digitalWrite(MS1_PIN, HIGH); digitalWrite(MS2_PIN, HIGH); digitalWrite(MS3_PIN, LOW);  break;
-        case 16: // Sixteenth step
-            digitalWrite(MS1_PIN, HIGH); digitalWrite(MS2_PIN, HIGH); digitalWrite(MS3_PIN, HIGH); break;
-        default: // fallback to full step
-            digitalWrite(MS1_PIN, LOW);  digitalWrite(MS2_PIN, LOW);  digitalWrite(MS3_PIN, LOW);  break;
-    }
-}
-
-const uint16_t microModes[] = {1, 2, 4, 8, 16};
-const uint8_t  numModes     = sizeof(microModes) / sizeof(microModes[0]);
-uint8_t  currentMode = 0;
-uint32_t lastChange  = 0;
-
-void updateMicrostepCycle()
-{
-    uint32_t now = millis();
-
-    if (now - lastChange >= 5000)   // change every 5 seconds
-    {
-        microstepping = microModes[currentMode];
-        steps_per_rev = 200.0f * microstepping;
-        setMicrostepA4988(microModes[currentMode]);
-
-        //Serial.printf("Microstepping set to 1/%u\n", microModes[currentMode]);
-
-        currentMode++;
-        if (currentMode >= numModes) currentMode = 0;
-        lastChange = now;
-    }
-}
-
-void microstepTest()
-{
-    const uint16_t testSteps = 200;
-
-    updateSensorValues();
-    float startAngle = axis.absoluteAngle;
-
-    for (uint16_t i = 0; i < testSteps; i++) {
-        digitalWrite(STEP_PIN_1, HIGH);
-        delayMicroseconds(5);
-        digitalWrite(STEP_PIN_1, LOW);
-        delayMicroseconds(2000);
-        updateSensorValues();   // keep encoder updated
-    }
-
-    updateSensorValues();
-    float delta = axis.absoluteAngle - startAngle;
-
-    Serial.print("Microstep test: ");
-    Serial.print(testSteps);
-    Serial.print(" pulses -> ");
-    Serial.print(delta, 2);   // 2 decimal places
-    Serial.println(" deg");
 }
 
 float Filter(float New, float Current, float alpha, float maxValue)

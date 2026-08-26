@@ -5,7 +5,7 @@ PID_Controller::PID_Controller(float* input, float* output, float* setpoint)
 {
     T = input;
     U = output;
-    AngleSet = setpoint;
+    this->setPoint = setpoint;
 
     kp = 1.0;
     ki = 0.0;
@@ -85,18 +85,20 @@ bool PID_Controller::Compute()
     float input = *T;
     if (!isfinite(input)) return false;
 
-    float error = *AngleSet - input;
+    float error = *setPoint - input;
 
     // --- proportional
-    float P = kp * error;
+    P = kp * error;
 
     // --- derivative on measurement
     float dInput = (input - lastInput) / Ts;
     float D_raw = -kd * dInput;
 
+    float tauD = 0.045; // filtrets tidskonstant i sekunder, tune denna
+    float alpha = tauD / (tauD + Ts);
     // --- low-pass filtered derivative
-    Df = dFilterAlpha * Df + (1.0 - dFilterAlpha) * D_raw;
-    float D = Df;
+    Df = alpha * Df + (1.0 - alpha) * D_raw;
+    D = Df;
 
     // --- integral candidate
     float I_candidate = I + ki * error * Ts;
@@ -129,3 +131,14 @@ bool PID_Controller::Compute()
 
     return true;
 }
+
+float PID_Controller::getInput() const { return *T; }
+float PID_Controller::getSetPoint() const { return *setPoint; }
+float PID_Controller::getError() const { return *setPoint - *T; }
+float PID_Controller::getP() const { return P; }
+float PID_Controller::getI() const { return I; }
+float PID_Controller::getD() const { return D; }
+float PID_Controller::getOutput() const { return *U; }
+float PID_Controller::getKp() const { return kp; }
+float PID_Controller::getKi() const { return ki; }
+float PID_Controller::getKd() const { return kd; }

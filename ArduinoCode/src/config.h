@@ -3,8 +3,8 @@
 //--------------------------------------------------------------------------------------------------
 // Task periods (ms)
 //--------------------------------------------------------------------------------------------------
-constexpr uint32_t TASK_2HZ   = 2000;
 constexpr uint32_t TASK_1HZ   = 1000;
+constexpr uint32_t TASK_5HZ   = 500;
 constexpr uint32_t TASK_10HZ   = 100;
 constexpr uint32_t TASK_20HZ   = 50;
 constexpr uint32_t TASK_50HZ   = 20;
