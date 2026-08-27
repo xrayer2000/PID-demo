@@ -103,8 +103,9 @@ void setup()
 
     // setMicrostepA4988(1);
     // microstepTest();
-    initStepTimer(axis1, TIM2, stepISR1);
-    initStepTimer(axis2, TIM3, stepISR2);
+    initStepTimer(axis1, TIM2, 1, PA5);
+    initStepTimer(axis2, TIM3, 2, PA7_ALT1);
+
     
     // 2. Enable all stepper drivers
     digitalWrite(EN_PIN, LOW); 
@@ -114,8 +115,8 @@ void setup()
     // setMicrostepTMC2209(microstepping);
     initTMC2209();
 
-    initAxisSettings(axis1, MODE_velControl, -10.0f, 5.0f, 0.0f, 0.0f, 90.0f, 4.0f);
-    initAxisSettings(axis2, MODE_posControl_OSC, 10.0f, 25.0f, 0.0f, 0.0f, 360.0f, 7.0f);
+    initAxisSettings(axis1, MODE_posControl_OSC, 0.0f, 40.0f, 2.0f, 0.0f, 90.0f, 5.0f);
+    initAxisSettings(axis2, MODE_velControl_OSC, 0.0f, 15.0f, 2.5f, 0.1f, 40.0f, 10.0f);
 
     axis1.posProfile.type = TrapProfile::Type::POSITION;
     axis1.velProfile.type = TrapProfile::Type::VELOCITY;

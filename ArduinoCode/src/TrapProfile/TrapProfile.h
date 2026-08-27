@@ -1,4 +1,5 @@
 #pragma once
+
 #include <Arduino.h>
 #include <math.h>
 
@@ -14,13 +15,6 @@ struct TrapProfile
     float startValue = 0.0f;
     float target = 0.0f;
 
-    // POSITION: maxVel   = velocity limit   (units/s)
-    //           maxAccel = acceleration limit (units/s^2)
-    // VELOCITY: maxVel   = acceleration limit (units/s^2)  <- intermediate cap, one derivative up
-    //           maxAccel = jerk limit         (units/s^3)
-    // Same trapezoidal-ramp shape applies to both; only the physical meaning
-    // of the ramped quantity (and its two limits) shifts by one derivative,
-    // so a single evaluator below serves both types.
     float maxVel = 0.0f;
     float maxAccel = 0.0f;
 
@@ -35,8 +29,10 @@ struct TrapProfile
     {
         startValue = from;
         target = to;
+
         maxVel = fabsf(vMax);
         maxAccel = fabsf(aMax);
+
         startTime_ms = now_ms;
         active = true;
 
@@ -50,33 +46,67 @@ struct TrapProfile
             return;
         }
 
-        float t_acc = maxVel / maxAccel;
-        float d_acc = 0.5f * maxAccel * t_acc * t_acc;
+        if (type == Type::POSITION) {
 
-        if (2.0f * d_acc >= distance) {
-            t_acc = sqrtf(distance / maxAccel);
-            t_flat = 0.0f;
+            // Position profile:
+            // maxVel = velocity limit
+            // maxAccel = acceleration limit
+
+            float t_acc = maxVel / maxAccel;
+            float d_acc = 0.5f * maxAccel * t_acc * t_acc;
+
+            if (2.0f * d_acc >= distance) {
+
+                // Triangular velocity profile
+                t_acc = sqrtf(distance / maxAccel);
+                t_flat = 0.0f;
+
+            } else {
+
+                // Trapezoidal velocity profile
+                t_flat = (distance - 2.0f * d_acc) / maxVel;
+            }
+
+            t_accel = t_acc;
+            totalTime = 2.0f * t_accel + t_flat;
+
         } else {
-            t_flat = (distance - 2.0f * d_acc) / maxVel;
-        }
 
-        t_accel = t_acc;
-        totalTime = 2.0f * t_accel + t_flat;
+            // Velocity profile:
+            // ramp velocity from startValue to target
+            // using maxAccel as acceleration limit.
+
+            t_accel = distance / maxAccel;
+            t_flat = 0.0f;
+            totalTime = t_accel;
+        }
     }
 
-    float getPosition(uint32_t now_ms) { return evaluate(now_ms); }
-    float getVelocity(uint32_t now_ms) { return evaluate(now_ms); }
+    float getPosition(uint32_t now_ms)
+    {
+        if (type != Type::POSITION)
+            return target;
+
+        return evaluatePosition(now_ms);
+    }
+
+    float getVelocity(uint32_t now_ms)
+    {
+        if (type != Type::VELOCITY)
+            return 0.0f;
+
+        return evaluateVelocity(now_ms);
+    }
 
 private:
-    // Shared trapezoidal-ramp evaluator. For POSITION this ramps position
-    // with an accel-limited (trapezoidal-velocity) profile. For VELOCITY it
-    // ramps velocity the same way, which — one derivative up — makes it a
-    // jerk-limited (trapezoidal-acceleration / S-curve) velocity profile.
-    float evaluate(uint32_t now_ms)
+
+    float evaluatePosition(uint32_t now_ms)
     {
-        if (!active) return target;
+        if (!active)
+            return target;
 
         float t = (now_ms - startTime_ms) * 0.001f;
+
         float dir = (target >= startValue) ? 1.0f : -1.0f;
 
         if (t >= totalTime) {
@@ -88,13 +118,16 @@ private:
         float distance;
 
         if (t < t_accel) {
+
             distance = 0.5f * maxAccel * t * t;
-        }
-        else if (t < t_accel + t_flat) {
+
+        } else if (t < t_accel + t_flat) {
+
             distance = 0.5f * maxAccel * t_accel * t_accel
                      + vPeak * (t - t_accel);
-        }
-        else {
+
+        } else {
+
             float t_dec = t - t_accel - t_flat;
 
             distance = 0.5f * maxAccel * t_accel * t_accel
@@ -104,5 +137,37 @@ private:
         }
 
         return startValue + dir * distance;
+    }
+
+    float evaluateVelocity(uint32_t now_ms)
+    {
+        if (!active)
+            return target;
+
+        float t = (now_ms - startTime_ms) * 0.001f;
+
+        float dir = (target >= startValue) ? 1.0f : -1.0f;
+
+        if (t >= totalTime) {
+            active = false;
+            return target;
+        }
+
+        // Linear velocity ramp:
+        //
+        // startValue --------> target
+        //
+        // with constant acceleration.
+
+        float velocity = startValue + dir * maxAccel * t;
+
+        // Prevent overshoot
+        if (dir > 0.0f && velocity > target)
+            velocity = target;
+
+        if (dir < 0.0f && velocity < target)
+            velocity = target;
+
+        return velocity;
     }
 };

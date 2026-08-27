@@ -37,7 +37,7 @@ import serial
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-LINE_RE = re.compile(r'^>([^:]+):([-+]?[0-9]*\.?[0-9]+)')
+LINE_RE = re.compile(r'^>([^:]+):([-+]?(?:[0-9]*\.?[0-9]+|nan))')
 
 
 def serial_reader(ser, data, lock, window_seconds, t0):
@@ -75,10 +75,11 @@ def main():
                           'e.g. "1,2". When set, enables grid mode: each --group becomes '
                           'a row, each axis becomes a column, and "_AXIS <n>" is appended '
                           'to every base name to find the matching telemetry variable.')
+    ap.add_argument('--overlay', action='store_true', help='overlay all selected axes on the same subplot')
     args = ap.parse_args()
 
     if not args.group:
-        args.group = ['pos', 'targetSetPoint', 'vel', 'CmdVel']
+        args.group = ['pos,CmdPos', 'vel,CmdVel', 'acc']
 
     ser = serial.Serial(args.port, args.baud, timeout=0.1)
     data = defaultdict(deque)
@@ -101,7 +102,41 @@ def main():
     lines = {}
     ax_to_names = {}
 
-    if axis_list:
+    if axis_list and args.overlay:
+        row_groups = [g.split(',') for g in args.group]
+        nrows = len(row_groups)
+
+        fig, axes_grid = plt.subplots(
+            nrows, 1, sharex=True,
+            figsize=(10, 2.5 * nrows),
+            squeeze=False
+        )
+
+        for r, bases in enumerate(row_groups):
+            ax = axes_grid[r][0]
+
+            row_names = []
+
+            for axis_num in axis_list:
+                for base in bases:
+                    full_name = f'{base}_AXIS {axis_num}'
+
+                    (line,) = ax.plot([], [], label=f'{base} AXIS {axis_num}')
+
+                    lines[full_name] = (ax, line)
+                    row_names.append(full_name)
+
+            ax_to_names[ax] = row_names
+            ax.legend(loc='upper right', fontsize=8)
+            ax.grid(True, alpha=0.3)
+
+            if r == 0:
+                ax.set_title('AXIS 1 vs AXIS 2')
+
+        axes_grid[-1][0].set_xlabel('time (s)')
+        axes = [axes_grid[r][0] for r in range(nrows)]
+
+    elif axis_list:
         if not args.group:
             raise SystemExit('--axes requires at least one --group of base names')
         row_groups = [g.split(',') for g in args.group]

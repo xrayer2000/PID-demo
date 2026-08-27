@@ -23,9 +23,9 @@ void taskControl(void *pvParameters)
             // Serial.println(passedTime - previousPassedTime1);
 
 
-            printAllAxisStatus();
-            // plotAxisStatus(axis1);
-            // plotAxisStatus(axis2);
+            // printAllAxisStatus();
+            plotAxisStatus(axis1);
+            plotAxisStatus(axis2);
 
             // Serial.print("Loop: ");
             // Serial.println(avgLoopTime);

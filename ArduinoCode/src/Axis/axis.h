@@ -40,11 +40,12 @@ struct AxisSettings
     float Kd = 0.0f;
 
     // Position profile
-    float posProMaxVel   = 200.0f; // degrees per second
-    float posProMaxAccel = 400.0f; // degrees per second²
+    float posProMaxVel   = 400.0f; // degrees per second
+    float posProMaxAccel = 600.0f; // degrees per second²
 
-    float velProMaxVel   = 100.0f; // degrees per second²
-    float velProMaxAccel = 150.0f;  // degrees per second³
+    // Velocity profile
+    float velProMaxVel   = 100.0f; // degrees per second
+    float velProMaxAccel = 50.0f; // degrees per second²
 
     // Oscillation
     float amplitude = 90.0f;
@@ -55,7 +56,7 @@ struct AxisSettings
 
     // Motor
     uint16_t stepsPerRev = 200;
-    uint16_t microsteps  = 64;
+    uint16_t microsteps  = 256;
 
     uint16_t totalStepsPerRev() const {
         return stepsPerRev * microsteps;
@@ -72,7 +73,10 @@ struct AxisState
     float pos               = 0.0f; // axis position in degrees
     float absPos            = 0.0f; // axis absolute position in degrees (from sensor)
     float vel               = 0.0f; // axis velocity in degrees per second
+    float prevVel           = 0.0f;
+    float acc               = 0.0f; // axis acceleration in degrees per second²
     float commandedVel      = 0.0f; // the velocity that the controller is commanding to the motor
+    bool  moving            = false;
 
     // Sensor
     AS5600* measuredPos = nullptr;
@@ -84,6 +88,7 @@ struct AxisState
 
     // Hardware
     HardwareTimer* stepTimer = nullptr;
+    uint32_t       stepChannel = 1;   // NYTT: TIM_CHANNEL_1, TIM_CHANNEL_2 etc.
     volatile uint32_t stepFrequency = 0;
     bool enabled = false;
 
@@ -143,10 +148,7 @@ void initSensor(AxisState& axis);
 void updateMotor(AxisState& axis);
 void setDirection(AxisState& axis, int velocity);
 void setStepFrequency(AxisState& axis, float freq);
-
-void stepISR1();
-void stepISR2();
-void initStepTimer(AxisState& axis, TIM_TypeDef* timer, void (*isr)());
+void initStepTimer(AxisState& axis, TIM_TypeDef* timer, uint32_t channel, uint32_t stepPin);
 
 void microstepTest(AxisState& axis);
 void printAxisStatus(const AxisState& axis);

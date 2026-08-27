@@ -15,13 +15,14 @@ plot:
 		--port /dev/ttyACM0 \
 		--baud 115200 \
 		--axes "1,2" \
+# 		--overlay
 
+run:
+	@$(MAKE) upload
+	@$(MAKE) monitor
 
-flash:
-	@pio run -e $(ENV) --target upload --disable-auto-clean
-	@pio device monitor -e $(ENV)
-
-flash_plot: upload
+run_plot:
+	@$(MAKE) upload
 	@sleep 1
 	@$(MAKE) plot
 
@@ -35,7 +36,7 @@ debug:
 	@pio debug -e $(ENV)
 
 rebuild:
-	@pio run -e $(ENV) --target clean
-	@pio run -e $(ENV)
+	@$(MAKE) clean
+	@$(MAKE) build
 
-.PHONY: build upload monitor flash clean erase debug rebuild
+.PHONY: build upload monitor plot run run_plot clean erase debug rebuild

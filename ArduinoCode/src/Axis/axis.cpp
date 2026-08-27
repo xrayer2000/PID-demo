@@ -5,7 +5,7 @@
 
 
 const float   readInterval  = 5000;  // microseconds
-constexpr uint32_t VEL_WINDOW_US = 1000;   // velocity accumulation window
+constexpr uint32_t VEL_WINDOW_US = 10000;   // velocity accumulation window
 
 AS5600 sensor1(&Wire1);
 AS5600 sensor2(&Wire2);
@@ -121,10 +121,14 @@ void updateSensorValues(AxisState& axis)
     if (velDt >= VEL_WINDOW_US) {                 // e.g. constexpr uint32_t VEL_WINDOW_US = 5000;
         float velDt_sec = velDt * 1e-6f;
         float degS_instant = axis.velAccumDeg / velDt_sec;
-        axis.vel = Filter(degS_instant, axis.vel, 0.99f, 600.0f);
+        axis.vel = Filter(degS_instant, axis.vel, 0.90f, 600.0f);
 
         axis.velAccumDeg     = 0.0f;
         axis.velWindowStart  = now;
+
+        float accInstant = (axis.vel - axis.prevVel) / velDt_sec;
+        axis.acc = Filter(accInstant, axis.acc, 0.90f, 600.0f);
+        axis.prevVel = axis.vel;
     }
 
     // Notify display task that new sensor data is ready
@@ -210,17 +214,20 @@ void updateMotor(AxisState& axis)
 
     float v = fabs(axis.commandedVel);   // now deg/s
 
-    if (!axis.enabled && v > ON_THRESHOLD) {
+    // Enable stays ON; hysteresis controls stepping
+    if (!axis.enabled) {
         axis.enabled = true;
         digitalWrite(axis.settings.pins.enPin, LOW);
-    } else if (axis.enabled && v < OFF_THRESHOLD) {
-        axis.enabled = false;
-        setStepFrequency(axis, 0);
-        axis.commandedVel = 0;
-        digitalWrite(axis.settings.pins.enPin, HIGH);
     }
 
-    if (axis.enabled) {
+    if (!axis.moving && v > ON_THRESHOLD) {
+        axis.moving = true;
+    } else if (axis.moving && v < OFF_THRESHOLD) {
+        axis.moving = false;
+        setStepFrequency(axis, 0);
+    }
+
+    if (axis.moving) {
         setDirection(axis, axis.commandedVel);
 
         float steps_per_sec = v / 360.0f * axis.settings.totalStepsPerRev();   // was v/60.0f (RPM->steps/s)
@@ -230,16 +237,18 @@ void updateMotor(AxisState& axis)
 
 void setStepFrequency(AxisState& axis, float steps_per_sec)
 {
+    if (axis.stepTimer == nullptr) return;   // guard against uninitialized axis (e.g. motor not connected)
+    
     axis.stepFrequency = steps_per_sec;
 
     if (steps_per_sec <= 0.0f)
     {
         axis.stepTimer->pause();
-        digitalWrite(axis.settings.pins.stepPin, LOW);
         return;
     }
 
     axis.stepTimer->setOverflow(steps_per_sec, HERTZ_FORMAT);
+    axis.stepTimer->setCaptureCompare(axis.stepChannel, 5, PERCENT_COMPARE_FORMAT);
     axis.stepTimer->refresh();
     axis.stepTimer->resume();
 
@@ -256,27 +265,32 @@ void setDirection(AxisState& axis, int velocity)
     digitalWrite(axis.settings.pins.dirPin, velocity >= 0);
 }
 
-void stepISR1()
+void initStepTimer(AxisState& axis, TIM_TypeDef* timer, uint32_t channel, uint32_t stepPin)
 {
-    digitalWrite(axis1.settings.pins.stepPin, HIGH);
-    // delayMicroseconds(3); // for DM556 to work properly, needs at least 2.5us pulse width
-    digitalWrite(axis1.settings.pins.stepPin, LOW);
-}
 
-void stepISR2()
-{
-    digitalWrite(axis2.settings.pins.stepPin, HIGH);
-    // delayMicroseconds(3); // for DM556 to work properly, needs at least 2.5us pulse width
-    digitalWrite(axis2.settings.pins.stepPin, LOW);
-}
+    Serial.print("initStepTimer axis: ");
+    Serial.println(axisIdToString(axis.axisId));
 
-void initStepTimer(AxisState& axis, TIM_TypeDef* timer, void (*isr)())
-{
+    Serial.println("  init: pinMode");
     pinMode(axis.settings.pins.stepPin, OUTPUT);
 
+    Serial.println("  init: new HardwareTimer");
     axis.stepTimer = new HardwareTimer(timer);
+    axis.stepChannel = channel;
+
+    Serial.println("  init: setMode");
+    axis.stepTimer->setMode(channel, TIMER_OUTPUT_COMPARE_PWM1, stepPin);
+
+    Serial.println("  init: setOverflow");
     axis.stepTimer->setOverflow(1000, HERTZ_FORMAT);
-    axis.stepTimer->attachInterrupt(isr);
+
+    Serial.println("  init: setCaptureCompare");
+    axis.stepTimer->setCaptureCompare(channel, 5, PERCENT_COMPARE_FORMAT);
+
+    Serial.println("  init: pause");
+    axis.stepTimer->pause();
+
+    Serial.println("  init: done");
 
     //BLDC temp
     // analogWriteFrequency(100000);  // sets PWM carrier freq for the timer(s) used by analogWrite
@@ -359,9 +373,9 @@ void printAxisStatus(const AxisState& axis)
 
     Serial.printf(
         "Axis:%s | ControlMode:%s | TSP:%6ld | CSP:%6ld | Pos:%6.2f | Vel:%6ld | CmdVel:%6ld | "
-        "Kp:%4ld | Ki:%4ld | Kd:%4ld | Micro:1/%lu | "
-        "CS:%2u | IRUN:%2u | IHOLD:%2u | VS:%u | "
-        "TSTEP:%6lu | PWM:%3u | I:%4.0fmA ",
+        "Kp:%4ld | Ki:%4ld | Kd:%4ld | Micro:1/%lu | ",
+        // "CS:%2u | IRUN:%2u | IHOLD:%2u | VS:%u | "
+        // "TSTEP:%6lu | PWM:%3u | I:%4.0fmA ",
 
         axisIdToString(axis.axisId),
         axisModeToString(axis.settings.axisMode),
@@ -373,15 +387,15 @@ void printAxisStatus(const AxisState& axis)
         (int32_t)axis.settings.Kp,
         (int32_t)axis.settings.Ki,
         (int32_t)axis.settings.Kd,
-        (uint32_t)axis.settings.microsteps,
+        (uint32_t)axis.settings.microsteps
 
-        cs,
-        irun,
-        ihold,
-        vsense,
-        (unsigned long)tstep,
-        pwm,
-        current_mA
+        // cs,
+        // irun,
+        // ihold,
+        // vsense,
+        // (unsigned long)tstep,
+        // pwm,
+        // current_mA
 
     );
 }
@@ -394,8 +408,8 @@ void printAllAxisStatus()
     
     Serial.printf("Time:%4lu.%02lu\t  | ", sec, centisec);
     printAxisStatus(axis1);
-    // Serial.print(" | ");
-    // printAxisStatus(axis2);
+    Serial.print(" | ");
+    printAxisStatus(axis2);
     Serial.println();
 }
 
@@ -412,6 +426,23 @@ void plotAxisStatus(const AxisState& axis)
     Serial.print(">vel_");             Serial.print(id); Serial.print(':');
     Serial.println(axis.vel);
 
-    Serial.print(">CmdVel_");          Serial.print(id); Serial.print(':');
-    Serial.println(axis.commandedVel);
+    Serial.print(">acc_");             Serial.print(id); Serial.print(':');
+    Serial.println(axis.acc);
+
+    if (axis.settings.axisMode == MODE_velControl || axis.settings.axisMode == MODE_velControl_OSC) {
+
+        Serial.print(">CmdVel_"); Serial.print(id); Serial.print(':');
+        Serial.println(axis.controlSetPoint);
+
+        Serial.print(">CmdPos_"); Serial.print(id); Serial.print(':');
+        Serial.println("nan");
+
+    } else {
+
+        Serial.print(">CmdPos_"); Serial.print(id); Serial.print(':');
+        Serial.println(axis.controlSetPoint);
+
+        Serial.print(">CmdVel_"); Serial.print(id); Serial.print(':');
+        Serial.println("nan");
+    }
 }
