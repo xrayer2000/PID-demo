@@ -8,7 +8,7 @@ upload:
 	@pio run -e $(ENV) --target upload --disable-auto-clean
 
 monitor:
-	@pio device monitor -e $(ENV)
+	@pio device monitor -e $(ENV) --port /dev/ttyACM0
 
 plot:
 	@python3 tools/live_plot.py \

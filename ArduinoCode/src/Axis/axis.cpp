@@ -26,7 +26,7 @@ void initPID(PID_Controller& pid, AxisState& axis)
     constexpr float MAX_DEG_S = 3600.0f;   // was MAX_RPM = 600.0f  (600 × 6)
 
     pid.SetOutputLimits(-MAX_DEG_S, MAX_DEG_S);
-    pid.SetIntegralLimit(1000);
+    pid.SetIntegralLimit(2000);
     pid.SetSampleTime(5);
     pid.SetStepsPerRev(axis.settings.totalStepsPerRev());
 }
@@ -44,7 +44,7 @@ void initAxisSettings(AxisState& axis, AxisMode mode, float setPoint, float kp, 
 
 void initSensor(AxisState& axis)
 {
-    axis.measuredPos->setSlowFilter(AS5600_SLOW_FILT_16X);
+    axis.measuredPos->setSlowFilter(AS5600_SLOW_FILT_2X);
     // const uint8_t AS5600_SLOW_FILT_16X      = 0;   // SF = 00 (default)
     // const uint8_t AS5600_SLOW_FILT_8X       = 1;   // SF = 01
     // const uint8_t AS5600_SLOW_FILT_4X       = 2;   // SF = 10
@@ -248,7 +248,8 @@ void setStepFrequency(AxisState& axis, float steps_per_sec)
     }
 
     axis.stepTimer->setOverflow(steps_per_sec, HERTZ_FORMAT);
-    axis.stepTimer->setCaptureCompare(axis.stepChannel, 5, PERCENT_COMPARE_FORMAT);
+    axis.stepTimer->setCaptureCompare(axis.stepChannel, axis.settings.dutyCycle, PERCENT_COMPARE_FORMAT);
+    // axis.stepTimer->setCaptureCompare(axis.stepChannel, 5, PERCENT_COMPARE_FORMAT);
     axis.stepTimer->refresh();
     axis.stepTimer->resume();
 
@@ -265,9 +266,11 @@ void setDirection(AxisState& axis, int velocity)
     digitalWrite(axis.settings.pins.dirPin, velocity >= 0);
 }
 
-void initStepTimer(AxisState& axis, TIM_TypeDef* timer, uint32_t channel, uint32_t stepPin)
+void initStepTimer(AxisState& axis, TIM_TypeDef* timer, uint16_t dutyCycle, uint32_t channel, uint32_t stepPin)
 {
 
+    axis.settings.dutyCycle = dutyCycle;
+    
     Serial.print("initStepTimer axis: ");
     Serial.println(axisIdToString(axis.axisId));
 
@@ -285,7 +288,8 @@ void initStepTimer(AxisState& axis, TIM_TypeDef* timer, uint32_t channel, uint32
     axis.stepTimer->setOverflow(1000, HERTZ_FORMAT);
 
     Serial.println("  init: setCaptureCompare");
-    axis.stepTimer->setCaptureCompare(channel, 5, PERCENT_COMPARE_FORMAT);
+    axis.stepTimer->setCaptureCompare(channel, axis.settings.dutyCycle, PERCENT_COMPARE_FORMAT);
+    // axis.stepTimer->setCaptureCompare(channel, 5, PERCENT_COMPARE_FORMAT);
 
     Serial.println("  init: pause");
     axis.stepTimer->pause();
@@ -373,9 +377,9 @@ void printAxisStatus(const AxisState& axis)
 
     Serial.printf(
         "Axis:%s | ControlMode:%s | TSP:%6ld | CSP:%6ld | Pos:%6.2f | Vel:%6ld | CmdVel:%6ld | "
-        "Kp:%4ld | Ki:%4ld | Kd:%4ld | Micro:1/%lu | ",
-        // "CS:%2u | IRUN:%2u | IHOLD:%2u | VS:%u | "
-        // "TSTEP:%6lu | PWM:%3u | I:%4.0fmA ",
+        "Kp:%4ld | Ki:%4ld | Kd:%4ld | Micro:1/%lu | "
+        "CS:%2u | IRUN:%2u | IHOLD:%2u | VS:%u | "
+        "TSTEP:%6lu | PWM:%3u | I:%4.0fmA ",
 
         axisIdToString(axis.axisId),
         axisModeToString(axis.settings.axisMode),
@@ -387,15 +391,15 @@ void printAxisStatus(const AxisState& axis)
         (int32_t)axis.settings.Kp,
         (int32_t)axis.settings.Ki,
         (int32_t)axis.settings.Kd,
-        (uint32_t)axis.settings.microsteps
+        (uint32_t)axis.settings.microsteps,
 
-        // cs,
-        // irun,
-        // ihold,
-        // vsense,
-        // (unsigned long)tstep,
-        // pwm,
-        // current_mA
+        cs,
+        irun,
+        ihold,
+        vsense,
+        (unsigned long)tstep,
+        pwm,
+        current_mA
 
     );
 }
@@ -407,8 +411,8 @@ void printAllAxisStatus()
     uint32_t centisec = (ms % 1000) / 10;
     
     Serial.printf("Time:%4lu.%02lu\t  | ", sec, centisec);
-    printAxisStatus(axis1);
-    Serial.print(" | ");
+    // printAxisStatus(axis1);
+    // Serial.print(" | ");
     printAxisStatus(axis2);
     Serial.println();
 }

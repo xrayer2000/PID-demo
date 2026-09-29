@@ -56,7 +56,9 @@ struct AxisSettings
 
     // Motor
     uint16_t stepsPerRev = 200;
-    uint16_t microsteps  = 256;
+    uint16_t microsteps  = 128;
+
+    uint16_t dutyCycle = 5; // percentage (0-100) for stepper driver PWM output
 
     uint16_t totalStepsPerRev() const {
         return stepsPerRev * microsteps;
@@ -148,7 +150,7 @@ void initSensor(AxisState& axis);
 void updateMotor(AxisState& axis);
 void setDirection(AxisState& axis, int velocity);
 void setStepFrequency(AxisState& axis, float freq);
-void initStepTimer(AxisState& axis, TIM_TypeDef* timer, uint32_t channel, uint32_t stepPin);
+void initStepTimer(AxisState& axis, TIM_TypeDef* timer, uint16_t dutyCycle, uint32_t channel, uint32_t stepPin);
 
 void microstepTest(AxisState& axis);
 void printAxisStatus(const AxisState& axis);

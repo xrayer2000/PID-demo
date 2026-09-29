@@ -37,6 +37,8 @@ import serial
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
+window_seconds = 15.0
+
 LINE_RE = re.compile(r'^>([^:]+):([-+]?(?:[0-9]*\.?[0-9]+|nan))')
 
 
@@ -64,7 +66,7 @@ def main():
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--port', required=True, help='e.g. /dev/ttyACM0')
     ap.add_argument('--baud', type=int, default=115200)
-    ap.add_argument('--window', type=float, default=15.0, help='seconds of history shown')
+    ap.add_argument('--window', type=float, default=window_seconds, help='seconds of history shown')
     ap.add_argument('--fps', type=float, default=60.0, help='plot redraw rate')
     ap.add_argument('--group', action='append', default=[],
                      help='comma-separated variable names sharing one subplot row '

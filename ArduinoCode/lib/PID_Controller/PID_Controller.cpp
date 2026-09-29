@@ -17,7 +17,7 @@ PID_Controller::PID_Controller(float* input, float* output, float* setpoint)
     outMin = -4095.0;
     outMax = 4095.0;
 
-    Ts_us = 1000;     // 1 ms loop
+    Ts_us = 5000;     // 5 ms loop
     lastTime = 0;
 
     lastInput = 0.0;

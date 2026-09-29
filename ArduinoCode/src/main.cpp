@@ -103,8 +103,8 @@ void setup()
 
     // setMicrostepA4988(1);
     // microstepTest();
-    initStepTimer(axis1, TIM2, 1, PA5);
-    initStepTimer(axis2, TIM3, 2, PA7_ALT1);
+    initStepTimer(axis1, TIM2, 5, 1, PA5);      //5% duty cycle, relevant for TMC2209
+    initStepTimer(axis2, TIM3, 50, 2, PA7_ALT1); //50% duty cycle, relevant for DM556
 
     
     // 2. Enable all stepper drivers
@@ -115,8 +115,8 @@ void setup()
     // setMicrostepTMC2209(microstepping);
     initTMC2209();
 
-    initAxisSettings(axis1, MODE_posControl_OSC, 0.0f, 40.0f, 2.0f, 0.0f, 90.0f, 5.0f);
-    initAxisSettings(axis2, MODE_velControl_OSC, 0.0f, 15.0f, 2.5f, 0.1f, 40.0f, 10.0f);
+    initAxisSettings(axis1, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 90.0f, 5.0f);
+    initAxisSettings(axis2, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 70.0f, 3.0f);
 
     axis1.posProfile.type = TrapProfile::Type::POSITION;
     axis1.velProfile.type = TrapProfile::Type::VELOCITY;
