@@ -116,7 +116,11 @@ void setup()
     initTMC2209();
 
     initAxisSettings(axis1, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 90.0f, 5.0f);
+<<<<<<< HEAD
     initAxisSettings(axis2, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 70.0f, 3.0f);
+=======
+    initAxisSettings(axis2, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 50.0f, 3.0f);
+>>>>>>> 2c53d2f (Configurable step duty cycle per axis; retune PID loop to 5 ms)
 
     axis1.posProfile.type = TrapProfile::Type::POSITION;
     axis1.velProfile.type = TrapProfile::Type::VELOCITY;
