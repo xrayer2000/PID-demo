@@ -152,6 +152,12 @@ The project includes `ArduinoCode/tools/live_plot.py` for plotting runtime telem
 
 The firmware outputs axis status information over the serial connection, which can be used to observe controller behaviour and evaluate tracking performance.
 
+### Position, Velocity and Acceleration
+
+The following plots show the measured position, velocity and acceleration of both axes during position oscillation.
+
+![Position, velocity and acceleration plots](PicturesAndMovies/pos_vel_acc_graph.png)
+
 ## Project Status
 
 The project is under active development. Hardware configuration, PID tuning and motion-control behaviour may change as the system evolves.
