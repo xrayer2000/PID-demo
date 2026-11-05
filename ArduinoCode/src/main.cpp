@@ -115,12 +115,8 @@ void setup()
     // setMicrostepTMC2209(microstepping);
     initTMC2209();
 
-    initAxisSettings(axis1, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 90.0f, 5.0f);
-<<<<<<< HEAD
-    initAxisSettings(axis2, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 70.0f, 3.0f);
-=======
-    initAxisSettings(axis2, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 50.0f, 3.0f);
->>>>>>> 2c53d2f (Configurable step duty cycle per axis; retune PID loop to 5 ms)
+    initAxisSettings(axis1, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 150.0f, 6.0f);
+    initAxisSettings(axis2, MODE_posControl_OSC, 40.0f, 40.0f, 0.0f, 0.0f, 120.0f, 4.0f);
 
     axis1.posProfile.type = TrapProfile::Type::POSITION;
     axis1.velProfile.type = TrapProfile::Type::VELOCITY;
@@ -269,7 +265,7 @@ void page_MenuRoot() //=================================================ROOT_MEN
     }
          if (changeValues[0]) { currPage = MENU_SELECTED_AXIS; initPage = true; updateAllItems = true; edditing = false; return; }
     else if (changeValues[1]) { incrementDecrementFloat(&selectedAxis->settings.targetSetPoint, 10.0, -20000.0, 20000.0); }
-    else if (changeValues[2])   incrementDecrementFloat(&selectedAxis->settings.Kp,       0.25,  0.0, 50.0);
+    else if (changeValues[2])   incrementDecrementFloat(&selectedAxis->settings.Kp,       0.25,  0.0, 80.0);
     else if (changeValues[3])   incrementDecrementFloat(&selectedAxis->settings.Ki,       0.05,  0.0,  20.0);
     else if (changeValues[4])   incrementDecrementFloat(&selectedAxis->settings.Kd,       0.05,  0.0, 10.0);
     else if (changeValues[5]) { currPage = MENU_AXIS_MODE; initPage = true; updateAllItems = true; edditing = false; return; }

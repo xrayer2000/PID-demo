@@ -1,5 +1,8 @@
-# Default PlatformIO environment
 ENV ?= genericSTM32F411CE
+BAUD ?= 115200
+
+# Automatically detect STM32 serial port
+PORT := $(shell pio device list | awk '/^\/dev\//{port=$$1} /GENERIC_F411CEUX/{print port; exit}')
 
 build:
 	@pio run -e $(ENV)
@@ -8,14 +11,19 @@ upload:
 	@pio run -e $(ENV) --target upload --disable-auto-clean
 
 monitor:
-	@pio device monitor -e $(ENV) --port /dev/ttyACM0
+	@if [ -z "$(PORT)" ]; then echo "Error: STM32 not found."; exit 1; fi
+	@pio device monitor -e $(ENV) --port $(PORT) --baud $(BAUD)
 
 plot:
+	@if [ -z "$(PORT)" ]; then echo "Error: STM32 not found."; exit 1; fi
+	@echo "Using STM32 port: $(PORT)"
 	@python3 tools/live_plot.py \
-		--port /dev/ttyACM0 \
-		--baud 115200 \
+		--port $(PORT) \
+		--baud $(BAUD) \
 		--axes "1,2" \
-# 		--overlay
+		--group "pos,CmdPos" \
+		--group "vel" \
+		--group "acc"
 
 run:
 	@$(MAKE) upload

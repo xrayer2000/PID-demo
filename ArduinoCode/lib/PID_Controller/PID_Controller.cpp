@@ -17,11 +17,7 @@ PID_Controller::PID_Controller(float* input, float* output, float* setpoint)
     outMin = -4095.0;
     outMax = 4095.0;
 
-<<<<<<< HEAD
     Ts_us = 5000;     // 5 ms loop
-=======
-    Ts_us = 5000;     // 1 ms loop
->>>>>>> 2c53d2f (Configurable step duty cycle per axis; retune PID loop to 5 ms)
     lastTime = 0;
 
     lastInput = 0.0;

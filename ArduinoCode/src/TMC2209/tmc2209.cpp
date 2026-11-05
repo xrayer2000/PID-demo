@@ -42,7 +42,7 @@ void initTMC2209()
     driver2.hstrt(4);
     driver2.hend(1);
 
-    driver1.rms_current(1500);
+    driver1.rms_current(1400);
     driver2.rms_current(2000);
 
     driver1.mstep_reg_select(true);

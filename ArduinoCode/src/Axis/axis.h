@@ -35,12 +35,12 @@ struct AxisSettings
     float targetSetPoint = 0.0f; //users desired target
 
     // Controller
-    float Kp = 5.0f;
-    float Ki = 1.0f;
+    float Kp = 40.0f;
+    float Ki = 0.0f;
     float Kd = 0.0f;
 
     // Position profile
-    float posProMaxVel   = 400.0f; // degrees per second
+    float posProMaxVel   = 450.0f; // degrees per second
     float posProMaxAccel = 600.0f; // degrees per second²
 
     // Velocity profile
