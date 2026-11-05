@@ -1,6 +1,16 @@
+
 # PID-DEMO
 
 A dual-axis stepper motor control system based on an STM32F411 microcontroller. The project implements closed-loop position and velocity control using magnetic rotary encoders, PID controllers and configurable motion profiles.
+
+## Mechanical Assembly
+
+The project incorporates three cycloidal reducer designs:
+
+- **Left:** Cycloidal reducers driven by stepper motors, designed by [SweepDynamics](https://github.com/SweepDynamics) and [Promakina](https://github.com/Promakina), respectively.
+- **Right:** Cycloidal reducer driven by a BLDC motor, designed by [sirojudinMunir](https://github.com/sirojudinMunir) ([SF-Motion](https://github.com/sirojudinMunir/sf-motion)).
+
+![Cycloidal Reducer Designs](<PicturesAndMovies/Cycloidal Reducers.jpg>)
 
 ## Features
 
@@ -26,6 +36,10 @@ A dual-axis stepper motor control system based on an STM32F411 microcontroller. 
 | User interface | Rotary encoder and push-button |
 
 The firmware uses separate I²C buses for the two AS5600 sensors and the OLED displays.
+
+### Electronics and Prototyping
+
+![STM32F411 Prototyping Board](<PicturesAndMovies/prototyping board.jpg>)
 
 ## Control Architecture
 
@@ -114,7 +128,7 @@ The firmware is developed using:
 - Visual Studio Code
 - Arduino framework
 - STM32 platform (`ststm32`)
-- STM32F411CE board configuration
+- STM32F411CEU board configuration
 - STM32FreeRTOS
 
 ## Building and Uploading
